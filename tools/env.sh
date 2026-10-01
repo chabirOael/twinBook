@@ -35,3 +35,8 @@ fi
 export PATH="${_twinbook_path}:${PATH:-/usr/local/bin:/usr/bin:/bin}"
 
 unset _twinbook_node_major _twinbook_node_ver _twinbook_node_bin _twinbook_path
+
+# The emulator started by tools/emulator-start.sh always listens on this console port, so
+# its adb serial is fixed. Device scripts use ANDROID_SERIAL if set, else this serial.
+export TWINBOOK_EMULATOR_PORT=5554
+export TWINBOOK_EMULATOR_SERIAL="emulator-${TWINBOOK_EMULATOR_PORT}"
