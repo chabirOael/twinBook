@@ -1,0 +1,21 @@
+{
+  "manifest_version": 2,
+  "name": "twin-bridge",
+  "version": "0.1.0",
+  "description": "twinBook built-in extension.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "twin-bridge@twinbook",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  },
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "twin-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "twinBook built-in WebExtension (twin-bridge).",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint:ext": "web-ext lint --source-dir dist --self-hosted",
+    "check": "npm run typecheck && npm run test && npm run build && npm run lint:ext"
+  },
+  "devDependencies": {
+    "@types/firefox-webext-browser": "143.0.1",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3",
+    "web-ext": "10.7.0"
+  }
+}
