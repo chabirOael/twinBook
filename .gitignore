@@ -1,0 +1,44 @@
+# Build outputs
+build/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# Gradle and Kotlin
+.gradle/
+.kotlin/
+
+# Local configuration
+local.properties
+
+# IDEs
+.idea/
+.vscode/
+.fleet/
+*.iml
+.DS_Store
+
+# Node / extension
+node_modules/
+extension/dist/
+*.tgz
+*.zip
+*.xpi
+
+# Signing material
+*.jks
+*.keystore
+*.p12
+*.pem
+keystore.properties
+
+# Raw traffic captures (from later milestones). Never commit these: they can hold cookies
+# and tokens. Only sanitized fixtures under fixtures/ are committed.
+captures/
+*.har
+
+# Logs and heap dumps
+*.log
+*.hprof
