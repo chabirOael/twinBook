@@ -21,6 +21,8 @@ android {
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Probes that only tools/ scripts run (persistence, update, memory).
+        testInstrumentationRunnerArguments["notAnnotation"] = "io.github.chabiroael.twinbook.engine.ManualProbe"
         ndk { abiFilters += listOf("x86_64", "arm64-v8a") }
     }
 

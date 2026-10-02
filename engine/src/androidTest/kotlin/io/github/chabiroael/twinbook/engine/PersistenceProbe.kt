@@ -25,6 +25,7 @@ import org.junit.runner.RunWith
  * Arguments: persistPhase=write|verify, token=<text>, expectMarker=<marker> (verify only),
  * previousVersion=<version> (verify only).
  */
+@ManualProbe
 @RunWith(AndroidJUnit4::class)
 class PersistenceProbe {
     private val args = InstrumentationRegistry.getArguments()

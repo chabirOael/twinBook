@@ -59,9 +59,15 @@ class ReplayProbeTest {
             }
 
             val siteOrigin = server.origin
+            val desktopUa = other.userAgent()
             val probes = listOf(
                 Probe("A background fetch", "background", null),
                 Probe("A background fetch + Origin/Referer rewrite", "background", JSONObject().put("origin", siteOrigin).put("referer", "$siteOrigin/")),
+                Probe(
+                    "A background fetch + Origin/Referer/User-Agent rewrite",
+                    "background",
+                    JSONObject().put("origin", siteOrigin).put("referer", "$siteOrigin/").put("userAgent", desktopUa),
+                ),
                 Probe("B anchor content.fetch", "anchor", null),
                 Probe("B' anchor content-script fetch (extension principal)", "anchor-extension-fetch", null),
             )

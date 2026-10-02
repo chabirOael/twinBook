@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
@@ -122,28 +123,25 @@ class EngineSession internal constructor(
     }
 
     /**
-     * Loads [url] and suspends until a load stops. Returns the page state at that moment. The
-     * initial about:blank load of a new session is not mistaken for it (unless about:blank was
-     * asked for); a redirect to another URL counts.
+     * Loads [url] and suspends until that load stops. Returns the page state at that moment.
+     *
+     * A new session always reports a stop for its initial about:blank, and that stop can
+     * arrive after a load started right away. So the first call waits (up to 5 s) for the
+     * initial stop before loading.
      */
     suspend fun loadAndWait(url: String, timeoutMs: Long = 30_000): PageState = withContext(Dispatchers.Main.immediate) {
+        if (pageFlow.value.loadCount == 0) withTimeoutOrNull(5_000) { pageFlow.first { it.loadCount > 0 } }
         val before = pageFlow.value.loadCount
         load(url)
-        withTimeout(timeoutMs) {
-            pageFlow.first { it.crashed || (it.loadCount > before && (it.url == url || (it.url != ABOUT_BLANK && url != ABOUT_BLANK))) }
-        }
+        withTimeout(timeoutMs) { pageFlow.first { it.loadCount > before || it.crashed } }
     }
 
     /** The user agent this session sends. */
-    suspend fun userAgent(): String = geckoSession.userAgent.await().orEmpty()
+    suspend fun userAgent(): String = withContext(Dispatchers.Main.immediate) { geckoSession.userAgent }.await().orEmpty()
 
     /** Main thread only. */
     fun close() {
         detach()
         geckoSession.close()
-    }
-
-    private companion object {
-        const val ABOUT_BLANK = "about:blank"
     }
 }

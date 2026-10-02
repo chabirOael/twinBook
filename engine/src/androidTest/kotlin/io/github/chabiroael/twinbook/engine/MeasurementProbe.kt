@@ -20,6 +20,7 @@ import org.junit.runner.RunWith
  * this app's processes at four stages. Skipped unless the instrumentation argument
  * `measure=1` is given, so it runs in a fresh process: tools/measure-memory.sh.
  */
+@ManualProbe
 @RunWith(AndroidJUnit4::class)
 class MeasurementProbe {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()

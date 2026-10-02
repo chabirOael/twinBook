@@ -24,6 +24,7 @@ export interface ReplayResult extends FetchedResponse {
 interface HeaderRewrite {
   origin?: string;
   referer?: string;
+  userAgent?: string;
 }
 
 let rewrite: HeaderRewrite | null = null;
@@ -36,12 +37,12 @@ export function installReplay(bridge: BridgeClient): void {
   browser.webRequest.onBeforeSendHeaders.addListener(
     (details) => {
       if (rewrite === null || !isOwnRequest(details) || details.requestHeaders === undefined) return {};
-      const headers = details.requestHeaders.filter((h) => {
-        const name = h.name.toLowerCase();
-        return !(name === "origin" && rewrite?.origin !== undefined) && !(name === "referer" && rewrite?.referer !== undefined);
-      });
-      if (rewrite.origin !== undefined) headers.push({ name: "Origin", value: rewrite.origin });
-      if (rewrite.referer !== undefined) headers.push({ name: "Referer", value: rewrite.referer });
+      const r = rewrite;
+      const replaced: Record<string, string | undefined> = { origin: r.origin, referer: r.referer, "user-agent": r.userAgent };
+      const headers = details.requestHeaders.filter((h) => replaced[h.name.toLowerCase()] === undefined);
+      if (r.origin !== undefined) headers.push({ name: "Origin", value: r.origin });
+      if (r.referer !== undefined) headers.push({ name: "Referer", value: r.referer });
+      if (r.userAgent !== undefined) headers.push({ name: "User-Agent", value: r.userAgent });
       return { requestHeaders: headers };
     },
     { urls: TARGET_URL_PATTERNS },

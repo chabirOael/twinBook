@@ -59,7 +59,10 @@ class EngineLabScreenTest {
         val deadline = System.currentTimeMillis() + timeoutMs
         var pixel = 0
         while (System.currentTimeMillis() < deadline) {
-            val bitmap = runBlocking { view.capturePixels().await() }!!
+            // capturePixels must be called on the main thread.
+            var capture: org.mozilla.geckoview.GeckoResult<android.graphics.Bitmap>? = null
+            InstrumentationRegistry.getInstrumentation().runOnMainSync { capture = view.capturePixels() }
+            val bitmap = runBlocking { capture!!.await() }!!
             pixel = bitmap.getPixel(bitmap.width / 2, bitmap.height - 10)
             if (close(pixel, Color.rgb(0x15, 0x65, 0xc0))) break
             Thread.sleep(500)
