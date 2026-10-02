@@ -20,7 +20,8 @@ extension over one native messaging port.
  | Engine (one per process)    |  native port  | twin-bridge background script       |
  |   Bridge  <-----------------+---------------+-> BridgeClient                       |
  |   EngineSession (tab) ...   |  JSON msgs    |   filters.ts   webRequest + StreamFilter
- +-----------------------------+               |   recorder.ts  GraphQL form fields  |
+ |   CaptureRecorder -> store  |               |   capture.ts   capture recorder     |
+ +-----------------------------+               |   recorder.ts  mock GraphQL fields  |
                                                |   replay.ts    fetch for the app    |
                                                | anchor.js (content script, anchor   |
                                                |   page only, no site JS there)      |
@@ -32,30 +33,41 @@ extension over one native messaging port.
 ```
 engine/src/main/kotlin/.../engine/
   Engine.kt            runtime, extension install and recovery, sessions, tracking protection
-  EngineSession.kt     one tab: profile (UA), load, attach/detach a GeckoView, page state
+  EngineSession.kt     one tab: profile (UA), load, back, reload, attach/detach a GeckoView,
+                       page state, navigation safety, permission denial, prompt delegate
   GeckoResults.kt      GeckoResult.await()
   bridge/Bridge.kt     app side of the bridge protocol (no GeckoView dependency)
+  capture/CaptureRecorder.kt  capture sessions: capture.start/stop/discard, capture.write
+capture/                 pure JVM module: CaptureStore, TaintScrubber, Finalizer (docs/CAPTURE.md)
 engine/src/androidTest/   instrumented gate tests and probes (see section 8)
 engine/build.gradle.kts   also builds extension/ and packages it into the module's assets
 extension/
   manifest.json        base manifest; build.mjs stamps the version (section 7)
-  src/background.ts    wires everything; diagnostic handlers
-  src/anchor.ts        anchor-page content script (replay path B)
-  src/config.ts        target URL patterns, GraphQL path, native app name, build marker
-  src/filters.ts       webRequest wiring of the stream filters
-  src/recorder.ts      request recorder
-  src/replay.ts        replay executor (paths A and B), header rewrite
+  src/background.ts    wires everything; filter modes; diagnostic handlers
+  src/anchor.ts        anchor-page content script (replay path B, mock only)
+  src/config.ts        GraphQL path, native app name, build marker
+  src/filters.ts       webRequest wiring of the stream filters and body taps (section 5)
+  src/capture.ts       capture recorder: metadata listeners, bodies, capture.* handlers
+  src/recorder.ts      M1 request reporter (mock GraphQL POSTs only)
+  src/replay.ts        replay executor (paths A and B), header rewrite; mock hosts only
   src/lib/             pure library code, unit-tested with Vitest:
     bridge.ts          BridgeClient (extension side of the protocol)
     ndjsonFilter.ts    streaming NDJSON filter core
     htmlIslandFilter.ts streaming filter for <script type="application/json"> islands
     mockAdRule.ts      the M1 mock ad rule (replaced by the rule engine in M4)
-    formFields.ts      form-field extraction for the recorder
+    profiles.ts        site profiles (mock, site) and filter modes
+    probe.ts           observe-only probe rule for the real site
+    redact.ts          layer 1 redaction; taint.ts layer 2 (docs/CAPTURE.md section 5)
+    record.ts          record helpers, body recorder; captureTransport.ts lossless transport
+    formFields.ts      form-field extraction for the M1 reporter
     bytes.ts, replayResult.ts, jsonGuard.ts
-  test/                Vitest tests
+  data/                redaction-rules.json, probe-keys.json (one data file each)
+  tools/               HAR importer (Node; tools/har-import.sh)
+  test/                Vitest tests (fakeBrowser.ts: a fake WebExtension API for wiring tests)
   lint.mjs, lint-allowlist.json   web-ext lint policy
 mockserver/            pure JVM module: the hermetic mock of the site's traffic shape
-app/                   engine lab screen (EngineLab.kt, EngineLabScreen.kt, assets/lab/)
+app/                   start screen, engine lab (EngineLab*.kt, assets/lab/), capture browser
+                       (CaptureBrowser*.kt, Prompts.kt), TwinBookApp, AppEngine
 ```
 
 ## 3. The `:engine` API
@@ -104,7 +116,19 @@ enables remote debugging. `configureRuntime` can adjust the `GeckoRuntimeSetting
 | `attach(view)` / `detach()` | Show in / remove from a `GeckoView`. Detached sessions keep running. |
 | `isHeadless` | True when not attached. |
 | `userAgent()` | The UA string this session sends. |
+| `goBack()`, `reload()` | Main thread only. `page.canGoBack` / `canGoForward` follow GeckoView. |
+| `promptDelegate` | JavaScript dialogs and other prompts (null dismisses them). |
 | `close()` | Main thread only. |
+
+`page.url` comes from location changes only (Gecko reports a page start even for a load the
+session then denies); `page.loadingUrl` is the last load start.
+
+Navigation safety, in every session: only `http`, `https`, `about`, `resource`, `data` and
+`blob` load (`EngineSession.ALLOWED_SCHEMES`); anything else, such as `fb://` or `intent://`, is
+denied and never leaves the app (`page.blockedLoads`, `page.lastBlockedScheme`). A request for
+a new window (`target=_blank`, `window.open`) loads in the same session
+(`page.newWindowsInPlace`). Every content, Android and media permission request is denied
+(`page.permissionsDenied`).
 
 Every session is kept *active* (`setActive(true)`), also when headless, so its timers and
 network run at full speed. Measured: a 100 ms interval in a headless session ticked 29 times in
@@ -131,8 +155,9 @@ engine.bridge.extension                                           // hello's ext
 - A handler returns a `JSONObject` (or any value, wrapped as `{"value": ...}`). Throw
   `BridgeException` to answer with a specific error code.
 - A request from the extension for a method with no handler waits until one is registered.
-- `events` replays the last 64 events to new collectors. Match events on content (for example
-  a URL with a unique id), not on arrival.
+- `events` replays the last 64 events to new collectors, and a slow collector can miss events
+  (buffer 1024, oldest dropped). Match events on content, not on arrival, and never use events
+  for data that must not be lost: capture records travel as `capture.write` requests.
 - Key order of JSON objects is not preserved across the bridge (GeckoView converts through
   `GeckoBundle`). Values are.
 
@@ -162,11 +187,17 @@ Ordering and queueing:
 | Method | Params | Result |
 |---|---|---|
 | `extension.info` | | `id`, `version`, `marker`, `startedAt`, `permissions` |
-| `filter.setEnabled` | `enabled` | `enabled`. Filtering is on by default; off is for measurements. |
+| `filter.setEnabled` | `enabled` | `enabled`. M1 switch: the mock profile in `enforce` (true) or `off`. |
+| `filter.setMode` | `profile` (`mock` \| `site`), `mode` (`enforce` \| `observe` \| `off`) | `profile`, `mode`; error `mode_not_allowed` for `site` + `enforce` |
+| `filter.describe` | | `modes`, `siteListening`, `profiles` (patterns, allowed modes, replay, rewrite, rule) |
+| `capture.start` | `sessionId`, `profiles` | `startedAt`, `extensionStartedAt`, `formatVersion`, `limits`; error `already_capturing` |
+| `capture.stop` | `sessionId` | after every record is acknowledged: `ok`, `counters`, `redactions`, `transport`, `errorSamples`, `secrets` [{`value`, `label`}] (memory only, for layer 2) |
+| `capture.discard` | `sessionId` | `discarded` |
+| `capture.status` | | `active`, `sessionId`, `counters`, `transport` |
 | `storage.get` | `keys` (array or null) | `items` from `storage.local` |
 | `storage.set` | `items` | `stored` (keys) |
 | `replay.configure` | `rewrite`: null or {`origin`, `referer`, `userAgent`} | Header rewrite for path A requests |
-| `replay.fetch` | `via`: `background` \| `anchor` \| `anchor-extension-fetch`; `request` {`url`, `method`, `headers`, `body`, `credentials`} | `via`, `status`, `statusText`, `url`, `headers`, `body` (text), `sentHeaders` (as Gecko reported them in onSendHeaders, only for URLs containing `twinbook_probe=`) |
+| `replay.fetch` (mock hosts only, else error `forbidden_host` before anything is sent) | `via`: `background` \| `anchor` \| `anchor-extension-fetch`; `request` {`url`, `method`, `headers`, `body`, `credentials`} | `via`, `status`, `statusText`, `url`, `headers`, `body` (text), `sentHeaders` (as Gecko reported them in onSendHeaders, only for URLs containing `twinbook_probe=`) |
 | `replay.anchors` | | `count`, `urls` of connected anchor pages |
 | `diag.echo` | anything | the params |
 | `diag.notes` | | `notes`: every `diag.note` event received |
@@ -181,15 +212,16 @@ Ordering and queueing:
 | Method | Result |
 |---|---|
 | `engine.info` | `geckoview`, `trackingProtection`. The extension calls it at startup, before the port exists. |
+| `capture.write` | params `sessionId`, `seq`, `items` ([{`l`: line} or {`f`: file, `b`: base64, `last`}]), `counters`. Answered `{written, seq}` once on disk; a repeated `seq` is ignored; an unknown session answers `{dropped: true}`. |
 
 ### Events from the extension
 
 | Name | Data |
 |---|---|
 | `bridge.startup` | extension info; emitted at background start, before the port exists |
-| `filter.stats` | `requestId`, `url`, `kind` (`ndjson` \| `document`), `chunks`, `busyMs` (time spent in the filter), `elapsedMs`, `firstDataMs`, `stats` (counters, see section 5) |
+| `filter.stats` | `requestId`, `url` (layer 1 applied for the site), `profile`, `mode`, `kind` (`ndjson` \| `document`), `chunks`, `coreFailed`, `busyMs` (time spent in the filter), `elapsedMs`, `firstDataMs`, `stats` (counters, see section 5) |
 | `filter.error` | `requestId`, `url`, `kind`, `error` {`kind`: `utf8` \| `parse` \| `rule` \| `internal` \| `attach` \| `stream`, `index`, `message`, `sample`} |
-| `recorder.request` | `requestId`, `url`, `method`, `type`, `documentUrl`, `timeStamp`, `source` (`formData` \| `raw` \| `none`), `fieldNames` (all, in order), `fields` {`fb_api_req_friendly_name`, `doc_id`, `variables`, `fb_dtsg`, `lsd`, `jazoest`, `__rev`, `__req`} |
+| `recorder.request` (mock only, values not redacted) | `requestId`, `url`, `method`, `type`, `documentUrl`, `timeStamp`, `source` (`formData` \| `raw` \| `none`), `fieldNames` (all, in order), `fields` {`fb_api_req_friendly_name`, `doc_id`, `variables`, `fb_dtsg`, `lsd`, `jazoest`, `__rev`, `__req`} |
 | `anchor.ready`, `anchor.gone` | `url` |
 
 ### Events the extension listens to
@@ -200,22 +232,44 @@ Ordering and queueing:
 
 ## 5. Filters
 
-### Which requests
+### Which requests: site profiles and modes
 
-`src/config.ts`: webRequest listeners cover `http://127.0.0.1/*` and `http://localhost/*`
-(match patterns ignore the port). M2 adds the real site here and in the manifest's host
-permissions. Requests the extension makes itself (origin `moz-extension://`) are never filtered
-or recorded.
+Site profiles (`src/lib/profiles.ts`) decide what twin-bridge may do where:
 
-- NDJSON filter: `xmlhttprequest` requests (XHR and fetch both have this type in Gecko) whose
-  path is `/api/graphql/`. Attached in `onBeforeRequest`.
-- Document filter: `main_frame` and `sub_frame` responses with `Content-Type: text/html`.
-  Attached in `onHeadersReceived`.
-- Recorder: POST requests to `/api/graphql/`, from `onBeforeRequest` with `requestBody`.
+| Profile | Own hosts | Modes | Replay, header rewrite | Content script | Listeners |
+|---|---|---|---|---|---|
+| `mock` | `127.0.0.1`, `localhost` | enforce (default), observe, off | yes | anchor page only | always |
+| `site` | `facebook.com`, `*.facebook.com` | observe (default), off | no | none | only while a capture of the site runs |
+
+Host permissions in the manifest: the mock and site patterns, plus `*://*/*` so request metadata
+of third parties contacted by the site's pages can be recorded (metadata listeners only, none of
+them blocking).
+
+Modes: `enforce` writes the core's output (M1). `observe` writes the original bytes first,
+unchanged, then gives a copy to the core, whose decisions are counted and reported
+(`filter.stats`, and an `observe` capture line) and whose output is discarded; the cores also
+skip re-serialization in observe mode. `off` attaches no core.
+
+One StreamFilter ("tap") per response at most, carrying a core and/or a capture body recorder:
+
+- Mock GraphQL (`xmlhttprequest`, path `/api/graphql/`): attached in a blocking
+  `onBeforeRequest`, NDJSON core with the mock ad rule.
+- Documents (`main_frame`, `sub_frame`, `text/html`) of a profile's own hosts: attached in a
+  blocking `onHeadersReceived`, HTML island core (mock ad rule or probe).
+- Site XHR and fetch responses with a textual content type: attached in `onHeadersReceived`,
+  NDJSON core with the probe, always observe. `filterResponseData` works from
+  `onHeadersReceived` for XHR too (the capture tests record 200 XHR bodies that way).
+- Any response whose body the running capture wants (docs/CAPTURE.md section 2.2).
+- Never: responses with status 1xx, 3xx or 204; the extension's own requests (origin
+  `moz-extension://`).
+
+The blocking `onHeadersReceived` listener always returns `{}`: it never cancels, redirects or
+changes headers. The only listener that changes anything is replay's `onBeforeSendHeaders`,
+registered for the mock's hosts and acting only on the extension's own requests.
 
 Gecko hands the stream filter the decoded body: with `Content-Encoding: gzip` the filter sees
-plain bytes (verified with the `gzip` scenario: `bytesIn` equals the uncompressed size) and
-the page receives the filtered bytes correctly.
+plain bytes (verified with the `gzip` scenario: `bytesIn` equals the uncompressed size), and
+the real site's `zstd` responses over HTTP/3 arrive decoded too (M2a capture).
 
 ### NDJSON stream filter (`src/lib/ndjsonFilter.ts`)
 
@@ -240,8 +294,12 @@ Guarantees, each covered by Vitest tests and by device tests:
 - Fail open: invalid UTF-8, invalid JSON, a rule that throws, or a replacement that cannot be
   serialized: the original line passes unchanged, `onError` reports it, filtering continues
   with the next line. An unexpected internal error switches to pass-through for the rest of the
-  stream without losing or reordering bytes. In `filters.ts` an exception around the core
-  writes the chunk unchanged and disconnects the filter.
+  stream without losing or reordering bytes (M2a fixed a case where the bytes of the line being
+  processed were lost; covered by a test that forces such a throw at every chunk boundary). In
+  `filters.ts` an exception around the core writes the chunk unchanged and stops using the core
+  for that response; the tap keeps passing bytes (and recording, if a capture wants the body).
+- Observe mode (`{ observe: true }`): decisions are counted, every line is forwarded unchanged,
+  replacements are not serialized.
 - Stats: `bytesIn`, `bytesOut`, `documents`, `kept`, `dropped`, `replaced`, `failedOpen`,
   `guard`, `passThrough`.
 
@@ -327,6 +385,14 @@ time each chunk was flushed (`server.streamTraces`), and pages post results to
 | `GET /anchor` | The replay anchor: no scripts. |
 | `GET /blank.html` | Empty page for same-origin iframes. |
 | `POST /report?run=<id>` | Stores the body for `awaitReport`. |
+| `POST /log?run=<id>&field=<f>` | Stores the body; `server.logs(run)`, `server.lastLog(run, field)`. |
+| `GET /secrets/page?run=<id>` | Plants `MockSecrets(run)`: cookies with attributes, the dtsg token and user id unkeyed in the HTML; its script posts the token as `fb_dtsg` (with `lsd`, `jazoest`), fetches `/secrets/json` (cookie values echoed in JSON), posts to the Bloks-shaped endpoint, reports. |
+| `GET\|POST /async/wbloks/fetch/` | One JSON document behind `for (;;);`, `application/x-javascript`. |
+| `GET /login.html`, `GET /nav.html` | Login-like form; custom scheme, intent, new-window, permission and dialog triggers. Both log element positions (`layout`) and results to `/log`. |
+| `GET /bulk?i=<n>&size=<bytes>`, `GET /bulk.html?n=&size=&big=&par=` | Deterministic bodies of exact size; a page that fetches `n` of them. |
+
+Every recorded request now also carries `responseStatus`, `responseSha256` (of the content as
+served, before gzip) and `responseLength`.
 
 Scenarios (`Scenarios.kt`): `ads-first`, `ads-middle`, `ads-last`, `ads-all`, `no-ads`,
 `no-guard`, `split-line` (cuts every 37 bytes), `split-utf8` (cuts 1 to 3 bytes into
@@ -355,14 +421,22 @@ must receive after filtering. The mock's `Json` writer produces the same bytes a
 | `DocumentFilterTest` | G10 |
 | `SessionsTest` | G14 |
 | `ReplayProbeTest` | G17, G18 (observations, logged with tag `twinbook-evidence`) |
+| `ObserveModeTest` | C3: every scenario in observe mode gives the page the unfiltered input with the same decisions; site enforce and replay refused |
+| `CaptureRecorderTest` | C4 to C6, C8: recorder completeness against the server's own log, layer 1 at the source, layer 2 at finalize, 200 responses with a 5.5 MB one; capture overhead |
 | `PersistenceProbe` | G15, G16 phases; skipped unless `-e persistPhase` is given |
 | `MeasurementProbe` | memory; skipped unless `-e measure 1` is given |
 
-`TestEngine` (in `TestSupport.kt`) holds the shared engine and server. Right after starting the
+App tests (`app/src/androidTest`): `EngineLabScreenTest` (M1), `CaptureBrowserScreenTest`
+(C10: text input through an input method and through key events, custom schemes and intents,
+new windows, permissions, dialogs, back, reload, site switch), `CaptureProbe` (`@ManualProbe`,
+run by `tools/capture-kill-test.sh` and for `tools/capture-pull.sh` checks).
+
+`TestEngine` (in `TestSupport.kt`) holds the shared engine and server, and a `CaptureRecorder`
+writing to the test app's `files/captures-test/`. Right after starting the
 engine it sends an event and a request over the bridge, before the extension exists, and
 records every bridge event from the first one.
 
-## 9. GeckoView quirks met in M1
+## 9. GeckoView quirks met in M1 and M2a
 
 1. **Background scripts of an installed extension start late.** GeckoView starts them on
    `extensions-late-startup`, which `geckoview.js` sends when the first session window opens
@@ -403,3 +477,12 @@ records every bridge event from the first one.
     do not survive a process restart; persistent ones do.
 12. **Lint:** `web-ext lint` flags `geckoViewAddons` as an unknown permission (allowlisted in
     `extension/lint-allowlist.json`). `nativeMessaging` is not flagged.
+13. **Denied loads still start.** For a link to a custom scheme, GeckoView reports
+    `onPageStart` with that URL before `onLoadRequest` is answered, then `onPageStop`; no
+    location change follows. `PageState.url` therefore follows `onLocationChange` only.
+14. **Set-Cookie** headers arrive in webRequest as one header whose value joins the cookies
+    with newlines.
+15. **Prompts:** `dismiss()` and `confirm()` mark a prompt complete themselves and throw if
+    called twice; complete the `GeckoResult` exactly once.
+16. **Real site, logged out (M2a):** responses come over HTTP/3 with `zstd` encoding and reach
+    the stream filter decoded. No custom-scheme navigation was attempted in the M2a loads.
