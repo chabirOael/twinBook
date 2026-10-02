@@ -1,6 +1,6 @@
 # twinBook master plan
 
-Status: M2b gate passed with reservations, 2026-10-03. Fix-up M2c issued. Next: M3.
+Status: M2b gate passed with reservations, 2026-10-02. Fix-up M2c issued. Next: M3.
 
 This file is the single source of truth for the project. The planner (Claude, in the
 planning conversation) owns it and updates it after every milestone report. Build
@@ -443,8 +443,8 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 | M1 | gate passed, accepted 2026-10-02, merged into main through pull request 2 | docs/reports/M1.md |
 | M2a | accepted 2026-10-02, merged into main through pull request 3 | docs/reports/M2a.md |
 | Owner capture | first pass done 2026-10-02: sessions `20261002-172602-site` (mobile) and `20261002-172927-site` (desktop). Neither contains a page document. A short supplementary capture with a reload is requested. | none |
-| M2b | gate passed with reservations, accepted 2026-10-03 subject to fix-up M2c. Branch `m2b-findings`. | docs/reports/M2b.md |
-| M2c | prompt issued 2026-10-03, docs/prompts/M2c.md, same branch | pending |
+| M2b | gate passed with reservations, accepted 2026-10-02 subject to fix-up M2c. Branch `m2b-findings`. | docs/reports/M2b.md |
+| M2c | prompt issued 2026-10-02, docs/prompts/M2c.md, same branch | pending |
 | M3 to M12 | not started | none |
 
 ## 10. Change log
@@ -507,7 +507,7 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   in the guest. The owner is now in group `kvm`, so KVM access is permanent. M2b prompt
   amended: new session listed, desktop document optional and expected from a real
   phone, new lead on where document ids come from.
-- 2026-10-03: M2b report reviewed. Planner re-ran `tools/check.sh` in a fresh clone
+- 2026-10-02: M2b report reviewed. Planner re-ran `tools/check.sh` in a fresh clone
   (180 tests pass, leak test skipped there by design), ran the leak test with the raw
   recordings present (pass), and made an independent leak check with its own method:
   of 9,663 fixture strings, 926 also occur in the recordings, all of them type names,
