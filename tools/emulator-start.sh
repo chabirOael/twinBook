@@ -26,6 +26,15 @@ if ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
   exit 1
 fi
 
+# The emulator's netsim daemon creates files under XDG_RUNTIME_DIR. If that variable names a
+# directory that does not exist or is not writable (seen in IDE and agent shells on WSL:
+# /run/user/1000/ missing), netsimd fails with "Permission denied" and qemu deadlocks during
+# boot ("detected a hanging thread"). Fall back to the default location instead.
+if [ -n "${XDG_RUNTIME_DIR:-}" ] && ! { [ -d "${XDG_RUNTIME_DIR}" ] && [ -w "${XDG_RUNTIME_DIR}" ]; }; then
+  echo "note: XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR} is not a writable directory; unsetting it for the emulator"
+  unset XDG_RUNTIME_DIR
+fi
+
 serial="${TWINBOOK_EMULATOR_SERIAL}"
 adb start-server > /dev/null
 if adb devices | grep -q "^${serial}[[:space:]]"; then

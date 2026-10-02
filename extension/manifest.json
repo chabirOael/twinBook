@@ -13,9 +13,30 @@
       }
     }
   },
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "nativeMessaging",
+    "geckoViewAddons",
+    "storage",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
   "background": {
     "scripts": [
       "background.js"
     ]
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://127.0.0.1/anchor",
+        "http://localhost/anchor"
+      ],
+      "js": [
+        "anchor.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
 }

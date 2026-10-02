@@ -1,6 +1,6 @@
 # twinBook master plan
 
-Status: outline version 1, approved to start. M0 prompt issued 2026-10-01.
+Status: M0 accepted and merged 2026-10-02. M1 prompt issued 2026-10-02.
 
 This file is the single source of truth for the project. The planner (Claude, in the
 planning conversation) owns it and updates it after every milestone report. Build
@@ -91,9 +91,10 @@ docs/                         PLAN.md, SETUP.md, findings, prompts/M<N>.md, repo
 
 Standing rules for every build agent:
 
-- Work on branch `m<N>-<slug>`. Commit locally in small commits. Never push. Never
-  merge into main. The branch is merged only after the planner accepts the report
-  and the owner agrees.
+- Create branch `m<N>-<slug>` from main. The first commit on it holds the planner's
+  uncommitted documents (plan update and the milestone prompt). Commit locally in small
+  commits. Never push, never merge, leave main untouched. After the planner accepts
+  the report, the owner pushes the branch and merges it through a GitHub pull request.
 - Do not edit docs/PLAN.md. Propose changes in the report.
 - Never ask for, store or log Facebook credentials, cookies or tokens. Raw captures
   stay outside git. Only sanitized fixtures are committed.
@@ -123,16 +124,23 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 - Exit evidence: debug APK builds; sample unit tests pass on JVM and in the extension
   workspace; emulator boots; app launches; screenshot.
 
-### M1. Engine gate: GeckoView, built-in extension, bridge, stream filter (M, GATE)
+### M1. Engine gate: GeckoView, built-in extension, bridge, stream filter (L, GATE)
 - Goal: prove every engine capability the design depends on, without touching Facebook.
-- Scope: GeckoView runtime and a session rendering a page. twin-bridge installed as a
-  built-in extension. Native messaging round trip in both directions. A local mock
-  server that imitates Facebook's traffic shape: POST XHR, chunked newline-delimited
-  JSON, `for (;;);` prefix. Stream filter that removes marked nodes. Request-body
-  capture. A test page that asserts it received filtered data and that its native
-  functions are untouched. Two sessions with different user agents sharing cookies.
-- Measurements: APK size per ABI, memory with one and two sessions, cold start.
-- Exit evidence: instrumented tests green on the emulator; measurement table.
+- Scope: GeckoView in `:engine` with a small coroutine API. twin-bridge installed as a
+  built-in extension. Bridge with request and response correlation in both directions.
+  Hermetic mock server inside the instrumented tests imitating Facebook's traffic
+  shape. Streaming filter core (newline-delimited JSON, guard prefix, arbitrary chunk
+  boundaries, prompt output, fail open) applied to XHR, fetch and main-document
+  responses. Request recorder. In-page integrity checks proving natives are untouched.
+  Two sessions with different user agents sharing cookies, and a headless session.
+  Persistence of cookies and extension storage across process kill. Extension update
+  with app data kept. Engine lab screen in the app.
+- Probes that inform M5 and do not fail M1: replay from the extension background
+  script, and replay from a same-origin anchor page with no site JavaScript, each with
+  the exact cookies and headers the server receives.
+- Measurements: APK size per ABI, memory with zero, one and two sessions, start-up
+  times, filter cost on a 5 MB response.
+- Exit evidence: checks G1 to G23 in docs/prompts/M1.md; docs/ENGINE.md.
 - If the gate fails: stop. Fallback options are an in-app local proxy or reducing the
   product to cosmetic filtering. The planner decides.
 
@@ -146,6 +154,8 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 - Deliverable docs/findings/payloads.md: query friendly names and variable shapes,
   pagination cursors, ad and suggestion markers with counts, video URL fields, token
   fields, Bloks fetch endpoints and the sponsored subtree signature, proposed rules v1.
+- Also in scope: the first run of the stream filter and the replay path against real
+  responses, in observe-only mode, to confirm what M1 proved on the mock.
 - Owner input before start: log in with the test account in the M1 build on the
   emulator. Optional but valuable: HAR files from an older account, since a fresh
   account may be shown few ads.
@@ -205,8 +215,10 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   post, counts). Endless pagination through the M5 client. Pull to refresh. Instant
   cold start from the snapshot. Image loading with disk cache and prefetch. Full-screen
   image viewer. Per-post fallback into the web session. Screenshot tests.
-- Exit evidence: screenshot tests from fixtures; on-device scroll with frame-time
-  numbers; cold-start time to first rendered feed.
+- Owner input before start: a real phone reachable over wireless debugging. The
+  emulator renders with a software GPU, so its frame times are not evidence.
+- Exit evidence: screenshot tests from fixtures; scroll frame-time numbers from the
+  real phone; cold-start time to first rendered feed.
 
 ### M8. Feed interactions (M)
 - Goal: do the everyday things without leaving native UI.
@@ -221,7 +233,7 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 - Scope: Media3 player pool. Muted autoplay in feed. Video tab as a vertical pager
   with endless pagination and neighbour preloading. DASH with progressive fallbacks.
   Expired-URL recovery. Audio focus, background pause, basic controls, full screen.
-- Owner input before start: a real phone reachable over wireless debugging.
+- Owner input: the real phone already connected for M7.
 - Exit evidence: on-device run through a fixed number of consecutive videos with no
   stall; time to first frame; dropped-frame numbers on the real phone.
 
@@ -253,20 +265,39 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 
 | When | What |
 |---|---|
-| Before M0 | Raise WSL memory, KVM access |
+| Before M1 | Permanent KVM fix (`sudo usermod -aG kvm $USER`, then restart WSL). Correct the git author email in `~/.gitconfig`. |
 | Before M2 | Test account login in the M1 build; optional HAR files |
 | Before M8 | Permission to post real reactions and comments from the test account |
-| Before M9 | Real phone over wireless debugging |
+| Before M7 | Real phone over wireless debugging |
 | Before M12 | Signing key decision, app name and icon, release channel |
 
-## 8. Status
+## 8. Conventions and decisions fixed so far
+
+- Build and run instructions live in docs/SETUP.md. Every script in tools/ works from a
+  shell with no profile. `tools/check.sh` is the single no-device gate.
+- SDK packages are installed through the Android CLI that ships with command-line
+  tools 23 (`android sdk install`). It updates itself. Accepted: the installer is not
+  part of the product, package versions are still named explicitly, and the setup
+  script verifies each package after install.
+- Memory settings: Gradle heap 2 GB, Kotlin daemon 1 GB, 4 workers, emulator guest RAM
+  3 GB. If a build needs more heap, lower the worker count before shrinking the AVD.
+- Built-in extensions are packaged under `assets/extensions/<name>/` in the APK.
+- `web-ext lint` policy from M1 on: errors always fail. Warnings fail unless listed in
+  a committed allowlist with a reason per entry.
+- The planner verifies every report by re-running the checks in a fresh clone of the
+  milestone branch.
+- Known gap: the final revision of `tools/setup-toolchain.sh` has not been run against
+  an empty home directory. Its JDK and command-line-tools steps were. Revisit in M12.
+
+## 9. Status
 
 | Milestone | Status | Report |
 |---|---|---|
-| M0 | prompt issued 2026-10-01, docs/prompts/M0.md | pending |
-| M1 to M12 | not started | none |
+| M0 | accepted 2026-10-02, merged into main through pull request 1 | docs/reports/M0.md |
+| M1 | prompt issued 2026-10-02, docs/prompts/M1.md | pending |
+| M2 to M12 | not started | none |
 
-## 9. Change log
+## 10. Change log
 
 - 2026-10-01: outline created.
 - 2026-10-01: environment checked for M0. WSL memory raised to 11 GB visible. KVM
@@ -274,3 +305,13 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   pinned in the M0 prompt: Gradle 9.8.0, AGP 9.4.1, Kotlin 2.4.20, Compose BOM
   2026.09.00, JDK 21, emulator image android-36 google_apis x86_64. Provisional
   application ID io.github.chabiroael.twinbook. M0 prompt issued.
+- 2026-10-02: M0 report reviewed and accepted. Planner re-ran `tools/check.sh` from a
+  fresh clone with an empty environment (pass), booted the emulator with KVM (34 s),
+  ran the 3 instrumented tests (pass), launched the app and inspected the screenshot
+  (all five items shown). Real-phone input moved from M9 to M7 because the emulator
+  uses a software GPU. Agent questions answered in section 8.
+- 2026-10-02: owner pushed `m0-skeleton` and merged it into main through GitHub pull
+  request 1. Git author email corrected by the owner for future commits. M1 scope
+  widened to include persistence, extension update, headless sessions, document
+  filtering and replay probes; size raised to L. GeckoView pinned to
+  157.0.20260924084938 (minSdk 26, per-ABI artifacts available). M1 prompt issued.
