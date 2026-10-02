@@ -11,7 +11,7 @@ import { bytesToLatin1, concatBytes, EMPTY, indexOfAsciiCaseInsensitive, sampleO
 import { errorMessage, type FilterError } from "./ndjsonFilter";
 
 /** Mutates the parsed island in place; returns true if it changed anything. */
-export type IslandTransform = (value: unknown) => boolean;
+export type IslandTransform = (value: unknown, info?: { readonly bytes: number }) => boolean;
 
 export interface HtmlFilterStats {
   bytesIn: number;
@@ -26,6 +26,8 @@ export interface HtmlFilterOptions {
   onError?: (error: FilterError) => void;
   /** An island larger than this is passed through unparsed. Default 32 MiB. */
   maxIslandBytes?: number;
+  /** Count changes the transform would make but forward every island unchanged. */
+  observe?: boolean;
 }
 
 const OPEN = "<script";
@@ -36,6 +38,7 @@ export class HtmlJsonIslandFilter {
   private readonly transform: IslandTransform;
   private readonly onError: ((error: FilterError) => void) | undefined;
   private readonly maxIslandBytes: number;
+  readonly observe: boolean;
   private readonly encoder = new TextEncoder();
   private buffer: Uint8Array = EMPTY;
   private ended = false;
@@ -52,6 +55,7 @@ export class HtmlJsonIslandFilter {
     this.transform = transform;
     this.onError = options.onError;
     this.maxIslandBytes = options.maxIslandBytes ?? 32 * 1024 * 1024;
+    this.observe = options.observe === true;
   }
 
   push(chunk: Uint8Array): Uint8Array {
@@ -149,12 +153,13 @@ export class HtmlJsonIslandFilter {
     }
     let changed: boolean;
     try {
-      changed = this.transform(value);
+      changed = this.transform(value, { bytes: content.length });
     } catch (e) {
       return this.failOpen(content, { kind: "rule", index, message: errorMessage(e), sample: sampleOf(content) });
     }
     if (!changed) return content;
     this.stats.changed++;
+    if (this.observe) return content;
     // "<" escaped so the island can never close its own script element.
     return this.encoder.encode(JSON.stringify(value).replace(/</g, "\\u003c"));
   }

@@ -9,11 +9,15 @@
 //                     is the only content script twin-bridge has.
 //   via "anchor-extension-fetch"  the content script's own fetch() (extension principal), for
 //                     comparison only.
+//
+// Replay and header rewriting are allowed only for profiles that permit them (the mock). A
+// request to any other host, the real site included, is refused before anything is sent, and
+// the rewrite listener is registered only for the mock's hosts.
 
 import type { BridgeClient } from "./lib/bridge";
 import { BridgeRequestError } from "./lib/bridge";
-import { TARGET_URL_PATTERNS } from "./config";
 import { isOwnRequest } from "./filters";
+import { MOCK_PROFILE, ownProfileOf, PROFILES } from "./lib/profiles";
 import { requestInit, toResult, type FetchedResponse, type ReplayRequest } from "./lib/replayResult";
 
 export interface ReplayResult extends FetchedResponse {
@@ -45,7 +49,7 @@ export function installReplay(bridge: BridgeClient): void {
       if (r.userAgent !== undefined) headers.push({ name: "User-Agent", value: r.userAgent });
       return { requestHeaders: headers };
     },
-    { urls: TARGET_URL_PATTERNS },
+    { urls: PROFILES.filter((p) => p.rewriteHeaders).flatMap((p) => [...p.urlPatterns]) },
     ["blocking", "requestHeaders"],
   );
 
@@ -57,7 +61,7 @@ export function installReplay(bridge: BridgeClient): void {
       sentHeaders.set(details.url, headers);
       if (sentHeaders.size > 50) sentHeaders.delete(sentHeaders.keys().next().value!);
     },
-    { urls: TARGET_URL_PATTERNS },
+    { urls: [...MOCK_PROFILE.urlPatterns] },
     ["requestHeaders"],
   );
 
@@ -89,6 +93,7 @@ export function installReplay(bridge: BridgeClient): void {
   bridge.handle("replay.fetch", async (params) => {
     const request = params["request"] as ReplayRequest;
     const via = String(params["via"] ?? "background");
+    assertReplayAllowed(request.url);
     let result: FetchedResponse;
     if (via === "background") {
       result = await fetchHere(request, via);
@@ -101,6 +106,11 @@ export function installReplay(bridge: BridgeClient): void {
   });
 
   bridge.handle("replay.anchors", () => ({ count: anchors.length, urls: anchors.map((p) => p.sender?.url ?? null) }));
+}
+
+/** Throws unless `url` belongs to a profile that allows replay. */
+export function assertReplayAllowed(url: string): void {
+  if (ownProfileOf(url)?.replay !== true) throw new BridgeRequestError("forbidden_host", "replay is not allowed for this host");
 }
 
 async function fetchHere(request: ReplayRequest, via: string): Promise<FetchedResponse> {

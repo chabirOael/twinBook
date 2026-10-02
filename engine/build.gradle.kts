@@ -146,6 +146,7 @@ val buildTwinBridge = tasks.register<BuildTwinBridgeTask>("buildTwinBridge") {
     marker.set(providers.gradleProperty("twinbook.extensionMarker").orElse("default"))
     sources.from(
         twinBridgeDir.dir("src"),
+        twinBridgeDir.dir("data"),
         twinBridgeDir.file("manifest.json"),
         twinBridgeDir.file("package.json"),
         twinBridgeDir.file("package-lock.json"),
