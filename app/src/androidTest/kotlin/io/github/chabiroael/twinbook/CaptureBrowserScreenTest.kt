@@ -219,6 +219,27 @@ class CaptureBrowserScreenTest {
     }
 
     @Test
+    fun captureStartReloadsThePageSoItsDocumentIsRecorded() {
+        awaitLayout(run, 0)
+        assertEquals(1, server.requests.count { it.path == "/login.html" })
+        compose.onNodeWithTag("capture-start").performClick()
+        waitFor("reload after capture start") { server.requests.count { it.path == "/login.html" } == 2 }
+        waitFor("page loaded again") { !browser.current.page.value.loading }
+        compose.onNodeWithTag("capture-stop").performClick()
+        waitFor("capture finalized", 60_000) { (browser.recorder.state.value as? CaptureRecorder.State.Idle)?.last != null }
+        val last = (browser.recorder.state.value as CaptureRecorder.State.Idle).last!!
+        assertTrue(last.message, last.finalized)
+        val events = java.io.File(browser.recorder.store.dir(last.id), "events.ndjson").readLines().map { JSONObject(it) }
+        val documents = events.filter { it.optString("ev") == "request" && it.optJSONObject("d")?.optString("type") == "main_frame" }
+        assertTrue("main document request recorded", documents.any { it.getJSONObject("d").getString("url").contains("/login.html") })
+        val bodies = events.filter { it.optString("ev") == "body" && it.optString("type") == "main_frame" }
+        assertEquals("main document body recorded", 1, bodies.size)
+        // The other site's session was not loaded or reloaded by the capture start.
+        assertEquals(0, server.requests.count { it.path == "/nav.html" })
+        evidence("F4 capture start: page reloaded (login.html requests 1 -> 2), session ${last.id} has ${documents.size} main_frame request(s) and ${bodies.size} document body")
+    }
+
+    @Test
     fun siteSwitchKeepsBothSessions() {
         awaitLayout(run, 0)
         compose.onNodeWithTag("site-desktop").performClick()

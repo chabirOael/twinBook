@@ -89,7 +89,7 @@ fun CaptureBrowserScreen(browser: CaptureBrowser, onExit: () -> Unit) {
                 scope.launch {
                     runCatching {
                         when (action) {
-                            CaptureAction.START -> browser.recorder.start(browser.config.captureProfiles)
+                            CaptureAction.START -> browser.startCapture()
                             CaptureAction.STOP -> browser.recorder.stop()
                             CaptureAction.DISCARD -> browser.recorder.discard()
                         }

@@ -87,8 +87,13 @@ to zoom). If it shows a login form instead, log in there too, then tap **Mobile 
 Tap **Start capture**. The status line below the buttons changes to
 `Recording <id>: N records, X MB, R redactions, E errors` and the numbers grow as you browse.
 
-Then tap **Reload** once. The home page was loaded before the capture started, and the first
-batch of feed posts travels inside that page, so it is only recorded if the page loads again.
+The app then reloads the current page by itself. The home page was loaded before the capture
+started, and the first batch of feed posts travels inside that page, so it is only recorded if
+the page loads again. Wait until the page has loaded again before you start browsing. Only the
+site you are looking at is reloaded, never both.
+
+A `daily` build older than M2b does not reload by itself: if the page does not reload when you
+tap **Start capture**, tap **Reload** once yourself.
 
 ## 6. On the mobile site (about 5 minutes)
 
@@ -111,7 +116,11 @@ problem with one does not cost you the other.
 1. Tap **Stop and finalize** and wait for the `Last session <id>: FINALIZED ...` line
    (step 8 explains it). Note the id: this is the mobile capture.
 2. Tap **Desktop site** at the top.
-3. Tap **Start capture**, then tap **Reload** once, for the same reason as in step 5.
+3. Tap **Start capture**. The desktop page reloads by itself, for the same reason as in step 5.
+   On the emulator this reload is heavy: the logged-in desktop page is about 3 MB and once
+   froze the emulated system while recording. Record the desktop site on a real phone if you
+   can (set `ANDROID_SERIAL` to the phone for `tools/daily-install.sh` and
+   `tools/capture-pull.sh`).
 4. Do the same five things: feed past five sponsored posts, comments of two posts, three
    videos in the Watch/Video section, notifications, one profile.
 
