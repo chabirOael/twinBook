@@ -5,7 +5,9 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.chabiroael.twinbook.engine.Engine
@@ -16,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +30,13 @@ class EngineLabScreenTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     private val timeoutMs = 60_000L
+
+    /** The lab is one tap away from the start screen. */
+    @Before
+    fun openLab() {
+        compose.onNodeWithTag("open-lab").performClick()
+        compose.waitForIdle()
+    }
 
     private fun packagedVersion(): String {
         // Read the manifest straight from the installed APK, independently of the app code.
