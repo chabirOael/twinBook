@@ -19,6 +19,9 @@ Read it once before you start. Every command runs from the repository root
   list is in `docs/SETUP.md`, "Protecting the owner's session".
 - Do not paste cookies, tokens, screenshots with personal data or the capture files into any
   chat. Report only what step 12 asks for.
+- The recording contains everything the site shows you, including other people's posts, names
+  and photos links. It stays on this machine under `captures/`, outside git. Do not copy it
+  anywhere else.
 
 ## 1. Start the emulator in a window
 
@@ -59,6 +62,13 @@ on-screen keyboard. The app saves no passwords and fills nothing in.
 
 With **Mobile site** selected, log in with the test account. Notes:
 
+- Typing the password: click into the field, wait a second, then type at normal speed. In
+  automated tests under heavy machine load, a burst of keys sent right after a field got focus
+  lost its first characters once. Human-speed typing never did. Before you submit, use the
+  page's show-password control, if it has one, to check what was typed. If the login is
+  rejected, check the password once and try one more time at most. Do not keep retrying:
+  repeated failures can lock the account.
+
 - If the site offers to open the Facebook app, or shows "Use the app" / "Open in app", choose
   the option to continue in the browser. Links into the Facebook app are ignored by twinBook
   and do nothing, which is expected.
@@ -77,6 +87,9 @@ to zoom). If it shows a login form instead, log in there too, then tap **Mobile 
 Tap **Start capture**. The status line below the buttons changes to
 `Recording <id>: N records, X MB, R redactions, E errors` and the numbers grow as you browse.
 
+Then tap **Reload** once. The home page was loaded before the capture started, and the first
+batch of feed posts travels inside that page, so it is only recorded if the page loads again.
+
 ## 6. On the mobile site (about 5 minutes)
 
 1. On the home feed, scroll slowly until you have passed at least **five sponsored posts**
@@ -90,15 +103,22 @@ Tap **Start capture**. The status line below the buttons changes to
 
 Do not post, react, comment, share or send anything.
 
-## 7. Switch to the desktop site (about 5 minutes)
+## 7. Second capture: the desktop site (about 5 minutes)
 
-Tap **Desktop site** at the top. The capture keeps running. Do the same five things:
-feed past five sponsored posts, comments of two posts, three videos in the Watch/Video section,
-notifications, one profile.
+Record the two sites as two separate captures. They stay small, they finalize faster, and a
+problem with one does not cost you the other.
+
+1. Tap **Stop and finalize** and wait for the `Last session <id>: FINALIZED ...` line
+   (step 8 explains it). Note the id: this is the mobile capture.
+2. Tap **Desktop site** at the top.
+3. Tap **Start capture**, then tap **Reload** once, for the same reason as in step 5.
+4. Do the same five things: feed past five sponsored posts, comments of two posts, three
+   videos in the Watch/Video section, notifications, one profile.
 
 ## 8. Stop the capture
 
-Tap **Stop and finalize**. The status shows `Finalizing x/y…` for a few seconds, then:
+Tap **Stop and finalize**. The status shows `Finalizing x/y…`, for a few seconds up to about
+a minute for a large capture, then:
 
 ```
 Last session <id>: FINALIZED, <n> files, <x> MB, <r> taint replacements
@@ -106,7 +126,8 @@ Last session <id>: FINALIZED, <n> files, <x> MB, <r> taint replacements
 
 **FINALIZED** means every remembered secret was scrubbed from the recording and it can be
 pulled. If it says **NOT finalized** with a reason, the recording was deleted for safety:
-report the reason, then you may repeat steps 5 to 8 once.
+report the reason, then you may repeat that capture once (steps 5 and 6 for the mobile
+site, step 7 for the desktop site).
 
 You may close the emulator window afterwards, or leave it running. The login stays.
 
@@ -117,6 +138,7 @@ tools/capture-pull.sh list
 tools/capture-pull.sh pull <id>
 ```
 
+Pull both sessions, the mobile one and the desktop one.
 `list` shows each session with `finalized` or `NOT-finalized` and its size. `pull` copies a
 finalized session into `captures/<id>/`, checks every file against its checksum and prints a
 summary. A good pull prints `checksums: <n> files verified, FINALIZED matches` and
@@ -152,8 +174,10 @@ Then delete the HAR file: it contains live cookies.
 
 ## 12. What to report back
 
-- The session id and the `Last session ...: FINALIZED ...` line from step 8.
-- The `checksums:` line and the three summary lines printed by `capture-pull.sh pull`.
+- For each of the two captures: the session id and its `Last session ...: FINALIZED ...`
+  line.
+- For each pull: the `checksums:` line and the three summary lines printed by
+  `capture-pull.sh pull`.
 - Roughly how many sponsored posts you saw on each site, and how long you browsed.
 - Anything unusual: security checks, logouts, errors count, crashes, pages that did not load.
 

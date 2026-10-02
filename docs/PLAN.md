@@ -1,6 +1,6 @@
 # twinBook master plan
 
-Status: M1 merged 2026-10-02. M2a prompt issued 2026-10-02.
+Status: M2a accepted 2026-10-02. Next: the owner's capture session, then M2b.
 
 This file is the single source of truth for the project. The planner (Claude, in the
 planning conversation) owns it and updates it after every milestone report. Build
@@ -57,9 +57,19 @@ native-feeling UI.
 - Measured in M1 on the emulator: debug APK 198 MB with two ABIs, about 80 to 87 MB
   per ABI compressed; memory 451 MiB PSS with no page and 558 MiB with one page;
   extension ready about 3.9 s and first page about 5.2 s after process start.
-- Not yet verified: logged-in payload shapes; stream filtering, service-worker
-  behaviour and cross-site replay against the real site over HTTPS. M2a and M2b close
-  these.
+- Seen in M2a on the real site, logged out, from GeckoView 157 (docs/reports/M2a.md):
+  both login pages render with GeckoView's own user agents, with no unsupported-browser
+  page and no redirect into the native app. Every response from the site's own hosts
+  came over HTTP/3 with zstd encoding and reached the stream filter already decoded.
+  The mobile document carries its Bloks data in inline scripts, not in JSON script
+  elements; the desktop document has 49 JSON script elements. The mobile site posts
+  telemetry to `/a/bz`, the desktop site to `/ajax/bz`. On the mobile site the `__a`
+  field carries a long opaque value. No service-worker fetch was seen while logged out.
+  The logged-out mobile page loads Google advertising pixels through `fbsbx.com`.
+- Not yet verified: logged-in payload shapes; whether `/api/graphql/` responses and
+  service-worker traffic pass through the stream filter when logged in; cross-site
+  replay against the real site. The owner's capture and M2b close the first two, M5
+  the last.
 
 ## 4. Architecture in one page
 
@@ -176,17 +186,21 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   docs/CAPTURE-CHECKLIST.md.
 
 ### Owner step between M2a and M2b
-- Start the emulator in a visible window, log in with the test account in the `daily`
-  build, and follow the capture checklist once in mobile mode and once in desktop
-  mode: scroll the feed past several sponsored posts, open comments, watch videos,
+- Follow docs/CAPTURE-CHECKLIST.md: start the emulator in a visible window, log in
+  with the test account in the `daily` build, and record two captures, one on the
+  mobile site and one on the desktop site, reloading the page after each start: scroll the feed past several sponsored posts, open comments, watch videos,
   open notifications, open a profile. About ten minutes. The owner does the browsing,
   so the logged-in account is never driven by an agent.
 - Optional: HAR files from an older account, since a fresh account may see few ads.
 
 ### M2b. Payload findings and fixtures (M, GATE)
 - Goal: know exactly what the site sends when logged in, and freeze it as fixtures.
-- Scope: pull the owner's captures. Build the sanitizer and pseudonymizer with the
-  real shapes in hand, and commit fixtures. Findings document
+- Before any body is read: re-apply layer 1 redaction offline to the pulled sessions
+  with an extended key list (camel-case token names and anything found by a scan for
+  long opaque values that recur across requests), and list every key and header that
+  carries such values.
+- Scope: build the sanitizer and pseudonymizer with the real shapes in hand, and
+  commit fixtures. Third-party request records never enter fixtures. Findings document
   docs/findings/payloads.md: query friendly names and variable shapes, pagination
   cursors, ad and suggestion markers with counts, video URL fields, token fields, Bloks
   fetch endpoints and the sponsored subtree signature, proposed rules v1. Engine facts
@@ -210,6 +224,9 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 - From the M1 review: the first site load waits for the engine to report ready, since
   pages loaded earlier are not filtered. Measure installing the extension on every
   start against the current start-up contract and keep the faster reliable one.
+- From the M2a review: make text input robust. A burst of key events sent shortly after
+  a field gains focus lost its first characters once under load. Find the cause in
+  GeckoView's input handling or the test, and fix whichever it is.
 - Exit evidence: scripted on-device walkthrough with screenshots; login survives app
   restart; instrumented tests for navigation and link handling.
 
@@ -340,6 +357,14 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 - The owner's logged-in session lives in the `daily` build of the app. No agent may
   uninstall it, clear its data, or wipe or recreate the AVD. Tests use the debug build
   and the engine test app only.
+- Capture conventions from M2a: format in docs/CAPTURE.md; the real-site profile is
+  locked to observe or off and has no replay, no header rewriting and no content
+  script; its listeners exist only while a capture runs. Redaction keys live in
+  `extension/data/redaction-rules.json`. `__a` is treated as a secret key. Third-party
+  identifiers stay in raw records, which never leave the machine. Capture overhead of
+  about 15 to 20 ms per request is accepted for the owner's session.
+- After accepting a report, the planner commits its plan update on the milestone
+  branch, so the owner's pull request carries the work and the plan together.
 - Known gap: the final revision of `tools/setup-toolchain.sh` has not been run against
   an empty home directory. Its JDK and command-line-tools steps were. Revisit in M12.
 
@@ -349,7 +374,8 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 |---|---|---|
 | M0 | accepted 2026-10-02, merged into main through pull request 1 | docs/reports/M0.md |
 | M1 | gate passed, accepted 2026-10-02, merged into main through pull request 2 | docs/reports/M1.md |
-| M2a | prompt issued 2026-10-02, docs/prompts/M2a.md | pending |
+| M2a | accepted 2026-10-02. Branch `m2a-capture-tooling`, waiting for the owner's pull request. | docs/reports/M2a.md |
+| Owner capture | waiting for the owner | none |
 | M2b to M12 | not started | none |
 
 ## 10. Change log
@@ -385,3 +411,17 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   which would have destroyed the owner's login.
 - 2026-10-02: local main synced with GitHub at the owner's request. From now on the
   planner's documents are committed on main and pushed before each milestone starts.
+- 2026-10-02: M2a report reviewed and accepted. Planner re-ran in a fresh clone:
+  `tools/check.sh` (116 extension tests, 29 JVM tests, lint clean), the instrumented
+  suite, the daily-build survival test and the interrupted-capture test; read the
+  observe-only code path; scanned the pulled logged-out capture independently and found
+  no unredacted cookie or keyed token. Decisions: `__a` stays redacted, third-party
+  identifiers stay in raw records, capture overhead accepted. Planner patched the owner
+  checklist: reload after starting a capture, two separate captures, privacy note.
+- 2026-10-02: one flaky test seen during the M2a review.
+  `CaptureBrowserScreenTest.textInputFromInputMethodAndKeyEvents` failed once in the
+  planner's first full-suite run (the password field received `Pass1` for `Hw-Pass1`),
+  then passed in a second full run, 5 of 5 alone, and 6 of 6 with human-like key
+  timing. Treated as a load-dependent timing issue, assigned to M3. The checklist now
+  tells the owner how to type the password safely. The daily build survived both full
+  runs, the M1 device scripts and an in-place update: same install time, marker intact.
