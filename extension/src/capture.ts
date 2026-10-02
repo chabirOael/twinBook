@@ -304,12 +304,13 @@ export function installCapture(bridge: BridgeClient, hooks: CaptureHooks): void 
     while (session.pending.size > 0) await Promise.all([...session.pending]);
     push(session, "end", "", { stoppedAt: Date.now(), counters: countersOf(session), redactions: { ...session.redactor.counts }, errorSamples: session.errorSamples });
     const ok = await session.transport.flush();
+    const counters = countersOf(session);
     const secrets = session.redactor.secrets.entries();
     session.redactor.secrets.clear();
     current = null;
     return {
       ok,
-      counters: countersOf(session),
+      counters,
       redactions: { ...session.redactor.counts },
       transport: { ...session.transport.stats } satisfies TransportStats,
       errorSamples: session.errorSamples,

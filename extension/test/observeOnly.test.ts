@@ -142,6 +142,7 @@ describe("real-site profile is observe only (C17)", () => {
     const stop = await bridge.call("capture.stop", { sessionId: "t1" });
     for (const url of SITE_URLS) expect(blockingListenersFor(url)).toEqual([]);
     expect(stop["ok"]).toBe(true);
+    expect((stop["counters"] as { secrets: number }).secrets).toBe((stop["secrets"] as unknown[]).length);
 
     const lines = bridge.lines();
     const text = JSON.stringify(lines);
