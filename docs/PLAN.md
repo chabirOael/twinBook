@@ -76,6 +76,15 @@ native-feeling UI.
   over a connection opened at page load, most likely a WebSocket, which the stream
   filter cannot see. Consequence under review: ads on the mobile site cannot be
   removed at the data layer; the web fallback would rely on cosmetic filtering.
+- Confirmed by a second mobile capture with the page load, 2026-10-02: the logged-in
+  mobile site opens a WebSocket to `kaios-d.facebook.com` and loads a service worker
+  script. It is a "web lite" client. Its feed data never appears as HTTP responses.
+- Emulator limit found 2026-10-02: reloading the desktop site under capture, with the
+  mobile session also alive, froze the whole emulated system (3 GB guest memory,
+  software graphics; Android's watchdog fired). The logged-in desktop document is
+  about 3 MB. The app's own main thread was waiting on the render thread, so this was
+  resource exhaustion, not an application deadlock. Heavy desktop pages must not be
+  loaded on the emulator under capture. The owner offered a real phone for recording.
 - Not yet verified: logged-in payload shapes; whether `/api/graphql/` responses and
   service-worker traffic pass through the stream filter when logged in; cross-site
   replay against the real site. The owner's capture and M2b close the first two, M5
@@ -259,6 +268,11 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   calls for feed page, comments page, notifications, profile timeline. Rate limiting,
   backoff, handling of revision-refresh signals, re-harvest when templates go stale.
   Comet page unloaded after harvest.
+- Design option raised by the emulator freeze: do not run the desktop site's
+  JavaScript application on the device at all. Fetch the page document as text from
+  the anchor page to read tokens, and take document ids from responses that list them.
+  M2b reports where document ids occur. If that works, the harvest costs a few
+  megabytes of download and no heavy page.
 - Replay path chosen in M1: requests are made from an anchor page, a same-origin page
   of the site with no site JavaScript, held in a headless session. Fallback: fetch from
   the extension background with Origin, Referer and User-Agent rewritten.
@@ -337,7 +351,7 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 | Before M1 | Permanent KVM fix (`sudo usermod -aG kvm $USER`, then restart WSL). Correct the git author email in `~/.gitconfig`. |
 | After M2a, before M2b | Test account login in the M2a build and the ten-minute capture checklist; optional HAR files |
 | Before M8 | Permission to post real reactions and comments from the test account |
-| Before M7 | Real phone over wireless debugging |
+| Now, optional, then from M7 on | Real phone over wireless debugging. First use: record the desktop site with a page load, which the emulator cannot handle. |
 | Before M12 | Signing key decision, app name and icon, release channel |
 
 ## 8. Conventions and decisions fixed so far
@@ -446,3 +460,9 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   the capture; M2b makes the capture browser reload automatically. M2b prompt issued,
   with a secret-hardening step before any body is read and a structure-only rule for
   fixtures because the repository is public.
+- 2026-10-02: owner's supplementary mobile capture `20261002-181317-site` confirms the
+  WebSocket data channel of the mobile site. The desktop attempt froze the emulator;
+  diagnosed from Android's ANR and watchdog records as memory and graphics exhaustion
+  in the guest. The owner is now in group `kvm`, so KVM access is permanent. M2b prompt
+  amended: new session listed, desktop document optional and expected from a real
+  phone, new lead on where document ids come from.

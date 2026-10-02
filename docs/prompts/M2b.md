@@ -36,11 +36,20 @@ clean):
 | `20261002-172602-site` | mobile | 140 requests in 137 s, of which 126 images and 13 media from `fbcdn.net` hosts. Only two requests to the site's own hosts: a beacon to `/ajax/weblite_load_logging/` and one image. No document, no XHR, no body. |
 | `20261002-172927-site` | desktop | 524 requests in 180 s. 85 XHR to `www.facebook.com` with bodies, 10.5 MB: 31 to `/api/graphql/`, 17 `/ajax/bulk-route-definitions/`, 14 `/ajax/bootloader-endpoint/`, 7 `/ajax/bnzai` (3 of them with no tab), 7 `/ajax/comet_error_reports/`, 3 `/video/unified_cvc/`, 3 `/ajax/route-definition/`, 2 `/ajax/navigation/`, 1 `/ajax/relay-ef/`. No document. 151 XHR for `video/mp4` to `scontent` hosts. The observing filter attached to all 85 and changed nothing. The recorder reported 2 errors: `request: TypeError: can't access property "replace", s is undefined`. |
 
-The owner may add supplementary sessions before you start, recorded after a reload so
-that they contain the page documents. Analyse every finalized `site` session in
-`captures/` whose id starts with `20261002-17` or is later. Ignore the earlier
-logged-out and mock sessions except where a comparison helps. If no session contains a
-document, say so and work with what exists.
+| `20261002-181317-site` | mobile, with page load | 287 requests in 79 s. One main document of 138 KB, recorded. One WebSocket handshake to `kaios-d.facebook.com`, path `/ws/<number>`. Two script requests for `/sw` on `m.facebook.com`, which looks like a service worker. 15 beacons to `/ajax/weblite_load_logging/` and `/ajax/weblite_resources_timing_logging/`. No XHR and no fetch. |
+
+An attempt to record the desktop site with a page load on the emulator froze the whole
+emulated system: 3 GB of guest memory and software graphics were not enough for a
+desktop page reload under capture with two sessions alive. Android's own watchdog
+fired. That session was never finalized and no longer exists. The unfinalized files
+showed a main document of about 3 MB. The owner may record that session on a real
+phone instead and pull it into `captures/` before you start.
+
+Analyse every finalized `site` session in `captures/` whose id starts with
+`20261002-17` or is later, whichever device it came from. Ignore the earlier logged-out
+and mock sessions except where a comparison helps, for example the logged-out desktop
+document for the structure of a page document. If no logged-in desktop document
+exists, say so and work with what exists.
 
 GraphQL queries seen in the desktop session, by friendly name, with response sizes:
 `CometNewsFeedPaginationQuery` ×4 (0.6 to 2.1 MB, 6 to 19 chunks),
@@ -57,12 +66,19 @@ A key that is present with a null value still counts, so these are not ad counts
 
 Two leads to settle:
 
-- **The mobile site's data channel.** During 137 s of scrolling, comments, videos,
-  notifications and a profile, the mobile site made no XHR or fetch at all. Its data
-  must travel over a connection opened at page load, most likely a WebSocket, whose
-  frames the recorder cannot see. The beacon path suggests the logged-in mobile site
-  is a "web lite" client. If a supplementary session contains the mobile page load,
-  identify the connection from its handshake and say what the document carries.
+- **The mobile site's data channel.** While the owner scrolled, opened comments,
+  watched videos and opened a profile, the mobile site made no XHR or fetch at all.
+  The session with the page load shows why: the page opens a WebSocket to
+  `kaios-d.facebook.com` and registers what looks like a service worker. The logged-in
+  mobile site is a "web lite" client whose data travels in WebSocket frames, which the
+  recorder and the stream filter cannot see. Confirm this from the recording, describe
+  what the 138 KB document and the handshake show, and state plainly what can and
+  cannot be filtered on the mobile site.
+- **Where document ids come from.** M5 would like to obtain tokens and the document
+  ids of queries without running the desktop site's JavaScript application on the
+  device, because that application is heavy. Find out which recorded responses carry
+  document ids, for example route definitions and bootloader responses, and which
+  tokens are available from a plain page document.
 - **Requests with no tab.** Three `/ajax/bnzai` posts had no tab id. Find out what made
   them and whether such responses pass through the stream filter.
 
@@ -135,6 +151,9 @@ Two leads to settle:
 - Make sure WebSocket and other long-lived connection handshakes are recorded as
   metadata with their type, host and path, and that their existence is visible in
   `tools/capture-summary.mjs`.
+- Recordings may come from the emulator or from a real phone. The device scripts take
+  the device from `ANDROID_SERIAL`. Check that `tools/capture-pull.sh` and
+  `tools/capture-summary.mjs` make no emulator-only assumption.
 - Do not install anything on the `daily` build yourself. Say in the report whether the
   owner should update it with `tools/daily-install.sh` before any further capture.
 
