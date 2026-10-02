@@ -22,6 +22,12 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "UBLOCK_ORIGIN_VERSION", "\"${libs.versions.ublockOrigin.get()}\"")
+        buildConfigField("String", "UBLOCK_ORIGIN_SHA256", "\"${libs.versions.ublockOriginSha256.get()}\"")
+        // The web shell is the start screen (daily); otherwise the developer start screen (debug).
+        buildConfigField("boolean", "OPEN_SHELL_AT_START", "false")
+        // Device scripts may point the shell at a mock and choose the start-up mode (DevOverrides).
+        buildConfigField("boolean", "DEV_OVERRIDES", "false")
         // Probes that only tools/ scripts run (capture kill and pull checks).
         testInstrumentationRunnerArguments["notAnnotation"] = "io.github.chabiroael.twinbook.ManualProbe"
         ndk { abiFilters += listOf("x86_64", "arm64-v8a") }
@@ -31,6 +37,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            buildConfigField("boolean", "DEV_OVERRIDES", "true")
         }
         // The login-safe build the owner logs in to. Debuggable like debug (so capture-pull.sh
         // can read its private storage with run-as), installed next to it. No test task targets
@@ -41,6 +48,10 @@ android {
             applicationIdSuffix = ".daily"
             versionNameSuffix = "-daily"
             matchingFallbacks += listOf("debug")
+            // Opens straight into the web shell on the real site; the developer screens are behind
+            // its menu. Never takes the launch options of device scripts.
+            buildConfigField("boolean", "OPEN_SHELL_AT_START", "true")
+            buildConfigField("boolean", "DEV_OVERRIDES", "false")
         }
         release {
             isMinifyEnabled = false

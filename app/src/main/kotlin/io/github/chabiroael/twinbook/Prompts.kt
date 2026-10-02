@@ -26,7 +26,10 @@ sealed class PendingPrompt(val message: String) {
  * one pending dialog at a time. Everything about saving or filling logins, cards or addresses,
  * file pickers, colour and date pickers, and HTTP auth is dismissed.
  */
-class Prompts : PromptDelegate {
+class Prompts(
+    /** Popups the popup blocker would block (no user gesture). The capture browser allows them; the shell does not. */
+    private val allowPopupsWithoutGesture: Boolean = true,
+) : PromptDelegate {
     private val pendingFlow = MutableStateFlow<PendingPrompt?>(null)
     val pending: StateFlow<PendingPrompt?> = pendingFlow.asStateFlow()
 
@@ -83,8 +86,9 @@ class Prompts : PromptDelegate {
         GeckoResult.fromValue(prompt.confirm(AllowOrDeny.ALLOW))
 
     // window.open goes on to EngineSession's onNewSession, which loads it in the same session.
+    // Gecko asks here only for popups without a user gesture.
     override fun onPopupPrompt(session: GeckoSession, prompt: PromptDelegate.PopupPrompt): GeckoResult<PromptResponse> =
-        GeckoResult.fromValue(prompt.confirm(AllowOrDeny.ALLOW))
+        GeckoResult.fromValue(prompt.confirm(if (allowPopupsWithoutGesture) AllowOrDeny.ALLOW else AllowOrDeny.DENY))
 
     override fun onLoginSave(session: GeckoSession, request: PromptDelegate.AutocompleteRequest<Autocomplete.LoginSaveOption>): GeckoResult<PromptResponse> =
         GeckoResult.fromValue(request.dismiss())
