@@ -28,7 +28,9 @@ export function l1Placeholder(length: number): string {
   return `!R${"*".repeat(length - 3)}!`;
 }
 
-const PLACEHOLDER = /^(?:!R\**!|\*{1,2})$/;
+// Layer 1 placeholders, and layer 2 placeholders (`!T:<label>!`): a session re-scrubbed again
+// keeps them as they are instead of treating them as new secrets.
+const PLACEHOLDER = /^(?:!R\**!|\*{1,2}|!T:[A-Za-z0-9_.:-]+!)$/;
 
 export function isPlaceholder(value: string): boolean {
   return PLACEHOLDER.test(value);

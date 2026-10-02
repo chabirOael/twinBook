@@ -48,6 +48,19 @@ export interface RequestInfo {
  */
 export const BARE_PLACEHOLDER = /(?<=[:[,]\s*)!T:[A-Za-z0-9_.:-]+!(?=\s*[,\]}])/g;
 
+/** The viewer's id as the recorder writes it since M2c: a quoted layer 2 placeholder. */
+export const VIEWER_ID_PLACEHOLDER = "!T:cookie:c_user!";
+
+/**
+ * True for the viewer's own id in a parsed session or fixture, in either form: the quoted
+ * placeholder (sessions finalized since M2c, and string ids everywhere), or 0 (a bare
+ * placeholder of an older session after repairBare, and the fixtures built from those, which are
+ * not regenerated).
+ */
+export function isViewerId(value: unknown): boolean {
+  return value === VIEWER_ID_PLACEHOLDER || value === 0 || value === "0";
+}
+
 export function repairBare(text: string): { text: string; repaired: number } {
   let repaired = 0;
   const out = text.replace(BARE_PLACEHOLDER, () => {

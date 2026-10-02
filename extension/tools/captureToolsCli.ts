@@ -2,6 +2,7 @@
 // Every command prints names, counts, lengths and structure only, never a recorded value.
 //
 //   rescrub <session dir>... [--replace]   layer 1 + layer 2 again with the current rules
+//   rescrub <copy>-rescrub... --in-place   the same on a re-scrubbed copy, rewritten in place
 //   scan <session dir>...                  keys whose values are long, opaque and recur
 //   findings <session dir>... [--rules f]  the numbers of docs/findings/payloads.md
 //   keypaths <key> <session dir>...        where a key occurs in the feed edges (exploration)
@@ -40,7 +41,7 @@ function allDocuments(dir: string): unknown[] {
 
 function usage(): never {
   process.stderr.write(
-    "usage: capture-tools rescrub <session dir>... [--replace]\n       capture-tools scan <session dir>...\n       capture-tools findings <session dir>... [--rules <file>]\n       capture-tools keypaths <key> <session dir>...\n       capture-tools fixtures <session dir>... [--census]\n",
+    "usage: capture-tools rescrub <session dir>... [--replace]\n       capture-tools rescrub <id>-rescrub... --in-place\n       capture-tools scan <session dir>...\n       capture-tools findings <session dir>... [--rules <file>]\n       capture-tools keypaths <key> <session dir>...\n       capture-tools fixtures <session dir>... [--census]\n",
   );
   process.exit(2);
 }
@@ -49,7 +50,7 @@ switch (cmd) {
   case "rescrub": {
     if (paths.length === 0) usage();
     for (const p of paths) {
-      const r = rescrubSession(p, { replace: flags.has("--replace") });
+      const r = rescrubSession(p, { replace: flags.has("--replace"), inPlace: flags.has("--in-place") });
       process.stdout.write(
         `rescrub ${r.source} -> ${r.dir}: ${r.lines} lines, ${r.bodies} bodies, layer 1 ${JSON.stringify(r.layer1)}, ` +
           `layer 2 ${r.eligibleValues}/${r.rememberedValues} values eligible, replacements ${JSON.stringify(r.replacements)}, verification hits ${r.verifyHits}\n`,
