@@ -104,9 +104,12 @@ export class NdjsonStreamFilter {
         if (nl < 0) break;
         const piece = chunk.subarray(start, nl + 1);
         const line = this.pending.length === 0 ? piece : concatBytes([...this.pending, piece]);
+        // The line's bytes leave `pending` and `start` only once it has been processed, so a
+        // throw below still finds them there and the catch emits them unchanged.
+        const processed = this.processLine(line);
         this.pending = [];
         start = nl + 1;
-        out.push(this.processLine(line));
+        out.push(processed);
       }
       if (start < chunk.length) this.pending.push(chunk.slice(start));
       return this.count(concatBytes(out));
