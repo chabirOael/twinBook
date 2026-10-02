@@ -1,6 +1,6 @@
 # twinBook master plan
 
-Status: M2b gate passed with reservations, 2026-10-02. Fix-up M2c issued. Next: M3.
+Status: M2b and its fix-up M2c accepted 2026-10-02. M3a prompt issued. Waiting for the owner's pull request.
 
 This file is the single source of truth for the project. The planner (Claude, in the
 planning conversation) owns it and updates it after every milestone report. Build
@@ -251,29 +251,34 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   the re-scrubbed copies alone so the original recordings can be deleted.
 - Exit evidence: checks X1 to X6 in docs/prompts/M2c.md.
 
-### M3. Web shell: first usable app (L)
-- Goal: a daily-usable app with native chrome around the mobile site, with ads hidden
-  as far as cosmetic filtering allows.
-- Scope: Compose shell with bottom tabs and top bar hosting the mobile-site session.
-  Login flow and session persistence. Back handling and deep navigation. Injected CSS
-  to hide the site's own header and footer. uBlock Origin bundled as a second built-in
-  extension with its mobile filter list, plus URL rules for the site's own logging
-  beacons. External links in a separate clean session, redirect unwrapping,
-  tracking-parameter stripping. File upload, downloads, camera and microphone
-  permission prompts. Pull to refresh. Dark mode. Session kept alive across tab
-  switches.
-- Ads on this surface are hidden, not removed: the logged-in mobile site gets its data
-  through a WebSocket that no extension can filter. The owner checks on the phone how
-  many sponsored posts still show.
-- From the M1 review: the first site load waits for the engine to report ready.
-  Measure installing the extension on every start against the current start-up
-  contract and keep the faster reliable one.
-- From the M2a review: make text input robust. A burst of key events sent shortly after
-  a field gains focus lost its first characters under load. Find the cause in
-  GeckoView's input handling or the test, and fix whichever it is.
-- Exit evidence: scripted on-device walkthrough on the mock with screenshots; login
-  survives app restart; instrumented tests for navigation and link handling; the
-  owner's count of visible sponsored posts on the phone.
+### M3a. Web shell core and uBlock Origin (L)
+- Goal: the first build the owner can use daily on a phone.
+- Scope: a shell around the mobile site that feels like an app. Start-up splash and
+  engine readiness, back, reload, menu, persistence across process death and restart,
+  crash recovery, system dark mode, rotation. Link hygiene: outbound links unwrapped,
+  stripped of tracking parameters and opened in the default browser. uBlock Origin
+  fetched at build time and installed as a second built-in extension. A strict mode in
+  which twin-bridge cancels the mobile site's own logging beacons, off by default.
+  Start-up contract measured with two extensions. Root cause of the key-event flake.
+- Not in scope, because no agent can see the logged-in site: restyling the site, hiding
+  its own navigation, native tabs.
+- Ads on this surface are hidden, not removed. The owner counts on the phone how many
+  sponsored posts still show, with ad hiding on and off.
+- Exit evidence: checks S1 to S15 in docs/prompts/M3a.md; docs/SHELL.md and the owner
+  checklist.
+
+### Owner step after M3a
+- Update the `daily` build on the phone and follow docs/SHELL-CHECKLIST.md for about
+  fifteen minutes. Report what worked, what did not, and the sponsored-post counts.
+
+### M3b. Shell completion (M)
+- Goal: everything a daily app needs beyond reading.
+- Scope: file upload and the photo picker, downloads, camera and microphone
+  permissions limited to the site, full-screen video, media controls, settings polish,
+  and fixes for what the owner's trial exposed. If uBlock Origin's filters leave
+  sponsored posts visible, a structure probe the owner can run, which records the
+  page's element structure without text, so cosmetic rules can be written.
+- Exit evidence: set in its prompt after the owner's trial.
 
 ### M4. Folded into M3 and M5
 - The Bloks payload filter is dropped: there is no HTTP payload to filter on the
@@ -381,7 +386,7 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 |---|---|
 | Before M1 | Permanent KVM fix (`sudo usermod -aG kvm $USER`, then restart WSL). Correct the git author email in `~/.gitconfig`. |
 | After M2a, before M2b | Done 2026-10-02: four logged-in sessions, three from the emulator and one from the phone |
-| After M3 | Use the app on the phone and count the sponsored posts that still show |
+| After M3a | Update the `daily` build on the phone, follow docs/SHELL-CHECKLIST.md, count the sponsored posts that still show |
 | Between M5a and M5b | Run the harvest and a few replays from the lab screen on the phone |
 | Before M8 | Permission to post real reactions and comments from the test account |
 | From now on | Real phone over wireless debugging, in use since 2026-10-02 |
@@ -432,6 +437,15 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   `data` and `encrypted` are redacted at capture time; at the next capture the owner
   counts sponsored and suggested posts; document ids are taken from script bundles at
   run time, no further recording is needed for that.
+- From M3a on, launching the `daily` build loads the real site with the owner's
+  account. No agent launches it. `tools/daily-survival-test.sh` is reworked in M3a so
+  it never launches the app.
+- The original pulled recordings may be deleted once the re-scrub tool can rewrite a
+  re-scrubbed copy in place, which M3a adds. Until then they stay.
+- Readers accept the viewer id both as the quoted placeholder and as `0`. Fixtures are
+  not regenerated for that.
+- The gating typing test types one key at a time. The burst variant is a diagnostic
+  that reports without failing the suite.
 - Known gap: the final revision of `tools/setup-toolchain.sh` has not been run against
   an empty home directory. Its JDK and command-line-tools steps were. Revisit in M12.
 
@@ -443,9 +457,10 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 | M1 | gate passed, accepted 2026-10-02, merged into main through pull request 2 | docs/reports/M1.md |
 | M2a | accepted 2026-10-02, merged into main through pull request 3 | docs/reports/M2a.md |
 | Owner capture | first pass done 2026-10-02: sessions `20261002-172602-site` (mobile) and `20261002-172927-site` (desktop). Neither contains a page document. A short supplementary capture with a reload is requested. | none |
-| M2b | gate passed with reservations, accepted 2026-10-02 subject to fix-up M2c. Branch `m2b-findings`. | docs/reports/M2b.md |
-| M2c | prompt issued 2026-10-02, docs/prompts/M2c.md, same branch | pending |
-| M3 to M12 | not started | none |
+| M2b | gate passed with reservations, accepted 2026-10-02. Branch `m2b-findings`, waiting for the owner's pull request. | docs/reports/M2b.md |
+| M2c | fix-up accepted 2026-10-02, same branch | docs/reports/M2b.md, last section |
+| M3a | prompt issued 2026-10-02, docs/prompts/M3a.md | pending |
+| M3b to M12 | not started | none |
 
 ## 10. Change log
 
@@ -518,3 +533,10 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   instrumented suite was not run. Fix-up M2c issued on the same branch. Plan revised:
   A3 reworded, M4 folded into M3 and M5, M5 split into tooling, an owner step and a
   gate, in the same pattern as M2.
+- 2026-10-02: M2c fix-up reviewed and accepted. Planner re-ran in a fresh clone:
+  `tools/check.sh` (194 extension tests, 30 JVM tests), the instrumented suite twice
+  (37 of 38, then 38 of 38: the one failure was the known key-event flake, with no
+  cascade into other tests), the three device scripts, and an in-place update of the
+  `daily` build on the emulator with its data intact. Answers to the agent's questions
+  recorded in section 8. M3 split into M3a (shell core and uBlock Origin), an owner
+  trial, and M3b (uploads, downloads, permissions, video, polish). M3a prompt issued.
