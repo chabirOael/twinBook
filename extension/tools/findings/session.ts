@@ -63,8 +63,15 @@ export class Session {
   readonly recs = new Map<string, Rec>();
   readonly session: Obj;
   private readonly bodies: Map<string, string>;
-  /** Bare placeholders repaired while parsing (see repairBare). */
-  repairedPlaceholders = 0;
+  /** Bare placeholders repaired per parsed body and parse kind, so a body parsed twice counts once. */
+  private readonly repaired = new Map<string, number>();
+
+  /** Distinct bare placeholders repaired while parsing (see repairBare). */
+  get repairedPlaceholders(): number {
+    let n = 0;
+    for (const v of this.repaired.values()) n += v;
+    return n;
+  }
 
   constructor(readonly dir: string) {
     const s = loadSession(dir);
@@ -128,6 +135,11 @@ export class Session {
     return this.fields(r).find(([k]) => k === name)?.[1];
   }
 
+  /** Every parse of a body sees the same placeholders: keep the largest count per body. */
+  private noteRepaired(r: Rec, n: number): void {
+    if (n > (this.repaired.get(r.rid) ?? 0)) this.repaired.set(r.rid, n);
+  }
+
   /** NDJSON documents of a body; lines that fail to parse are counted. */
   ndjson(r: Rec): { docs: Json[]; lines: string[]; failed: number } {
     const text = this.bodyText(r);
@@ -135,10 +147,11 @@ export class Session {
     const docs: Json[] = [];
     const lines: string[] = [];
     let failed = 0;
+    let repaired = 0;
     for (const line of text.split("\n")) {
       if (line.trim() === "") continue;
       const fixed = repairBare(line.replace(/^\s*for ?\(;;\);/, ""));
-      this.repairedPlaceholders += fixed.repaired;
+      repaired += fixed.repaired;
       try {
         docs.push(JSON.parse(fixed.text));
         lines.push(line);
@@ -146,6 +159,7 @@ export class Session {
         failed++;
       }
     }
+    this.noteRepaired(r, repaired);
     return { docs, lines, failed };
   }
 
@@ -156,16 +170,18 @@ export class Session {
     const parts = text.split(/for ?\(;;\);/);
     const docs: Json[] = [];
     let failed = 0;
+    let repaired = 0;
     for (const p of parts) {
       if (p.trim() === "") continue;
       const fixed = repairBare(p);
-      this.repairedPlaceholders += fixed.repaired;
+      repaired += fixed.repaired;
       try {
         docs.push(JSON.parse(fixed.text));
       } catch {
         failed++;
       }
     }
+    this.noteRepaired(r, repaired);
     return { docs, failed, guards: parts.length - 1 };
   }
 
@@ -175,9 +191,10 @@ export class Session {
     if (text === undefined) return [];
     const out: { attrs: string; size: number; json: Json | undefined }[] = [];
     const re = /<script type="application\/json"([^>]*)>([\s\S]*?)<\/script>/g;
+    let repaired = 0;
     for (let m = re.exec(text); m !== null; m = re.exec(text)) {
       const fixed = repairBare(m[2]!);
-      this.repairedPlaceholders += fixed.repaired;
+      repaired += fixed.repaired;
       let json: Json | undefined;
       try {
         json = JSON.parse(fixed.text);
@@ -186,6 +203,7 @@ export class Session {
       }
       out.push({ attrs: m[1]!, size: new TextEncoder().encode(m[2]!).length, json });
     }
+    this.noteRepaired(r, repaired);
     return out;
   }
 

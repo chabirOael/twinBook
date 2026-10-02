@@ -39,7 +39,9 @@ node tools/capture-summary.mjs captures/<id>-rescrub    # per-session overview
 `findings` takes all four `-rescrub` directories at once; it prints sections numbered like this
 document. One recording defect affects every parser (section 13): layer 2 replaced the viewer's
 id where the site sends it as a bare JSON number, leaving `!T:cookie:c_user!` unquoted. The
-tools turn such a placeholder into `0` before parsing (765 places in the two desktop sessions).
+tools turn such a placeholder into `0` before parsing (65 and 68 places in the two desktop
+sessions; M2b first reported 765, which counted each place once per parse). Since M2c the
+finalize pass writes the placeholder quoted there (docs/CAPTURE.md).
 
 ## 1. Transport
 
@@ -562,9 +564,11 @@ changes, as it does.
 
 Recording defect found here: layer 2 replaces a secret wherever its bytes occur. The viewer id
 also occurs as a bare JSON number (`"userID":<digits>` and in arrays), where the placeholder
-`!T:cookie:c_user!` becomes invalid JSON: 364 places in session 172927 and 401 in 183314.
-The analysis repairs them. The live traffic was never affected. A fix belongs in the
-finalize pass: a numeric placeholder for digit-only values in number positions.
+`!T:cookie:c_user!` becomes invalid JSON. The tools' pattern matches 65 places in session
+172927 and 68 in 183314 (M2b's 364 and 401 counted each place once per parse); 4 and 19 of
+them are real number positions, the rest lie inside strings. The analysis repairs them. The
+live traffic was never affected. Fixed in M2c: the finalize pass now writes a quoted
+placeholder in number positions (docs/CAPTURE.md, "Secrets that are JSON numbers").
 
 ## 14. Open questions
 

@@ -194,8 +194,11 @@ finalize; they are never written to disk or logged.
 - Bytes are scanned left to right; at each position the longest matching variant is replaced
   by `!T:<label>!`, for example `!T:cookie:c_user!`. The first value's label wins when two
   values share a variant. Labels contain only `[A-Za-z0-9_.:-]`.
+- A match that is a whole JSON number is replaced by the placeholder as a JSON string, so the
+  document stays valid JSON (see "Secrets that are JSON numbers" below).
 
-The same algorithm runs in TypeScript for the HAR importer (`extension/src/lib/taint.ts`).
+The same algorithm runs in TypeScript for the HAR importer and the offline re-scrub
+(`extension/src/lib/taint.ts`).
 Both implementations run the shared vectors `extension/test/vectors/taint.json` (Vitest and
 the `:capture` JVM test).
 
@@ -203,15 +206,29 @@ Known over-redaction: any non-secret cookie value of 8 characters or more (for e
 window size like `1280x720`) is scrubbed wherever it appears. Placeholders name their label,
 so M2b can tell.
 
-### Known defect: secrets that are JSON numbers
+### Secrets that are JSON numbers
 
-Layer 2 replaces bytes. The site sends the viewer's id (the `c_user` cookie value) also as a
-bare JSON number (`"userID":<digits>`, array elements). There the placeholder
-`!T:cookie:c_user!` stands unquoted, which is not valid JSON: 364 places in session
-`20261002-172927-site`, 401 in `20261002-183314-site`. The offline tools turn such a
-placeholder into `0` before parsing (`repairBare` in `extension/tools/findings/session.ts`).
-A fix for the finalize pass would write a numeric placeholder where the match stands in a
-number position.
+Layer 2 replaces bytes. The site also sends the viewer's id (the `c_user` cookie value) as a
+bare JSON number (`"userID":<digits>`, array elements, a map keyed by the id). Up to M2b the
+placeholder then stood unquoted, `"userID":!T:cookie:c_user!`, which is not valid JSON.
+
+Since M2c both implementations write it as a JSON string where the match is a whole JSON
+number: the value is a number literal, the nearest non-blank byte before it is `:`, `,` or
+`[`, the nearest after it is `,`, `]` or `}`, and the nearest quote before it is not the
+opening quote of a plain string (that would make it text such as a list `"a,<id>,b"`). The
+quotes are escaped for the depth at which the number sits in JSON-inside-a-string: `"` at the
+top level, `\"` inside a JSON string, `\\\"` one level deeper. Example:
+`{"userID":"!T:cookie:c_user!"}` and, inside a request's `variables`,
+`"{\"actorID\":\"!T:cookie:c_user!\"}"`. The label is kept; the type changes from number to
+string. Everywhere else the placeholder is written as before.
+
+Sessions finalized before this change still hold bare placeholders. The offline tools read
+both: `repairBare` (`extension/tools/findings/session.ts`) turns a bare placeholder in a
+number position into `0` before parsing, and the `findings` tool reports how many it repaired
+per session, each place counted once. In the owner's recordings that regex matches 65 places
+in `20261002-172927-site` and 68 in `20261002-183314-site`. Only 4 and 19 of them (and 1 in
+`20261002-181317-site`) are real numbers. The others lie inside string values, where the
+document was valid JSON already. M2b's figure of 765 counted the same places once per parse.
 
 ### Re-scrubbing a pulled session with newer rules
 

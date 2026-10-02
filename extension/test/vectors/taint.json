@@ -1,5 +1,5 @@
 {
-  "about": "Shared layer 2 (taint) test vectors. Run by extension/test/taint.test.ts and capture/src/test/.../TaintScrubberTest.kt. Inputs and outputs are UTF-8 text; scrubbing works on its bytes. See docs/CAPTURE.md section 5.",
+  "about": "Shared layer 2 (taint) test vectors. Run by extension/test/taint.test.ts and capture/src/test/.../TaintScrubberTest.kt. Inputs and outputs are UTF-8 text; scrubbing works on its bytes. See docs/CAPTURE.md section 5. Cases with \"validJson\" are JSON documents whose output must parse, including every string that holds JSON (a numeric secret in a number position is written as a quoted placeholder).",
   "minTaintLength": 8,
   "stopList": [
     "true",
@@ -198,6 +198,183 @@
       "input": "nothing to do 😀",
       "output": "nothing to do 😀",
       "counts": {}
+    },
+    {
+      "name": "numeric secret as a bare JSON number becomes a quoted placeholder",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "{\"userID\":100012345678,\"n\":1}",
+      "output": "{\"userID\":\"!T:cookie:c_user!\",\"n\":1}",
+      "counts": {
+        "cookie:c_user": 1
+      },
+      "validJson": true
+    },
+    {
+      "name": "numeric secret as array elements, with blanks around them",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "{\"ids\":[100012345678, 2,\n 100012345678 ]}",
+      "output": "{\"ids\":[\"!T:cookie:c_user!\", 2,\n \"!T:cookie:c_user!\" ]}",
+      "counts": {
+        "cookie:c_user": 2
+      },
+      "validJson": true
+    },
+    {
+      "name": "numeric secret already in a string keeps the plain placeholder",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "{\"id\":\"100012345678\",\"t\":\"id 100012345678 here\"}",
+      "output": "{\"id\":\"!T:cookie:c_user!\",\"t\":\"id !T:cookie:c_user! here\"}",
+      "counts": {
+        "cookie:c_user": 2
+      },
+      "validJson": true
+    },
+    {
+      "name": "bare number inside JSON held in a JSON string gets escaped quotes",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "{\"s\":\"{\\\"userID\\\":100012345678}\"}",
+      "output": "{\"s\":\"{\\\"userID\\\":\\\"!T:cookie:c_user!\\\"}\"}",
+      "counts": {
+        "cookie:c_user": 1
+      },
+      "validJson": true
+    },
+    {
+      "name": "string that holds a JSON array starting with the number",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "{\"s\":\"[100012345678,1]\"}",
+      "output": "{\"s\":\"[\\\"!T:cookie:c_user!\\\",1]\"}",
+      "counts": {
+        "cookie:c_user": 1
+      },
+      "validJson": true
+    },
+    {
+      "name": "bare number two levels of JSON-in-a-string deep",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "{\"a\":\"{\\\"b\\\":\\\"{\\\\\\\"c\\\\\\\":100012345678}\\\"}\"}",
+      "output": "{\"a\":\"{\\\"b\\\":\\\"{\\\\\\\"c\\\\\\\":\\\\\\\"!T:cookie:c_user!\\\\\\\"}\\\"}\"}",
+      "counts": {
+        "cookie:c_user": 1
+      },
+      "validJson": true
+    },
+    {
+      "name": "previous string ends in an escaped backslash",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "[\"a\\\\\",100012345678]",
+      "output": "[\"a\\\\\",\"!T:cookie:c_user!\"]",
+      "counts": {
+        "cookie:c_user": 1
+      },
+      "validJson": true
+    },
+    {
+      "name": "number in a page script is quoted too",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "<script>window.__boot = [\"tok\", 100012345678];</script>",
+      "output": "<script>window.__boot = [\"tok\", \"!T:cookie:c_user!\"];</script>",
+      "counts": {
+        "cookie:c_user": 1
+      }
+    },
+    {
+      "name": "not a JSON number position: URL, form field, longer number, text",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "u=/x?id=100012345678&y=1 f=100012345678, n:1000123456789 t 100012345678",
+      "output": "u=/x?id=!T:cookie:c_user!&y=1 f=!T:cookie:c_user!, n:!T:cookie:c_user!9 t !T:cookie:c_user!",
+      "counts": {
+        "cookie:c_user": 4
+      }
+    },
+    {
+      "name": "a non-numeric secret in a number position keeps the plain placeholder",
+      "secrets": [
+        {
+          "value": "AbCdEf123456",
+          "label": "cookie:xs"
+        }
+      ],
+      "input": "[AbCdEf123456]",
+      "output": "[!T:cookie:xs!]",
+      "counts": {
+        "cookie:xs": 1
+      }
+    },
+    {
+      "name": "numeric secret in a comma list inside a string is text; as a value keyed by itself it is a number",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "{\"s\":\"{\\\"k\\\":\\\"a1,100012345678,-1\\\",\\\"m\\\":{\\\"100012345678\\\":100012345678}}\"}",
+      "output": "{\"s\":\"{\\\"k\\\":\\\"a1,!T:cookie:c_user!,-1\\\",\\\"m\\\":{\\\"!T:cookie:c_user!\\\":\\\"!T:cookie:c_user!\\\"}}\"}",
+      "counts": {
+        "cookie:c_user": 3
+      },
+      "validJson": true
+    },
+    {
+      "name": "comma list at the top level of a string value stays as text",
+      "secrets": [
+        {
+          "value": "100012345678",
+          "label": "cookie:c_user"
+        }
+      ],
+      "input": "{\"k\":\"x,100012345678,y\",\"n\":[1,100012345678]}",
+      "output": "{\"k\":\"x,!T:cookie:c_user!,y\",\"n\":[1,\"!T:cookie:c_user!\"]}",
+      "counts": {
+        "cookie:c_user": 2
+      },
+      "validJson": true
     }
   ]
 }

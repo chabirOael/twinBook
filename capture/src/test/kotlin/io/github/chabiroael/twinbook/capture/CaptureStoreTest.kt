@@ -67,6 +67,32 @@ class CaptureStoreTest {
     }
 
     @Test
+    fun aSecretThatIsAJsonNumberLeavesValidJson() {
+        val w = store.create("n1")
+        val variables = """{"actorID":$cookie,"count":5}"""
+        val request = """{"ev":"request","rid":"9","body":{"kind":"formData","fields":[["variables",${JsonWriter.write(variables)}]]}}"""
+        w.append(1, listOf(CaptureItem.Line(request), body("""{"data":{"viewer":{"userID":$cookie,"ids":[$cookie, 3]}}}""" + "\n" + """{"label":"x","data":{"actor":{"id":"$cookie"}}}""", "bodies/9-1.res")))
+        val result = Finalizer.finalize(store, w, listOf(Secret(cookie, "cookie:c_user")), emptyMap())
+        assertTrue(result.message, result.ok)
+        assertEquals(mapOf("cookie:c_user" to 4), result.replacements)
+
+        val dir = store.dir("n1")
+        val placeholder = "!T:cookie:c_user!"
+        @Suppress("UNCHECKED_CAST")
+        val docs = File(dir, "bodies/9-1.res").readLines().map { MiniJson.parse(it) as Map<String, Any?> }
+        @Suppress("UNCHECKED_CAST")
+        val viewer = (docs[0]["data"] as Map<String, Any?>)["viewer"] as Map<String, Any?>
+        assertEquals(placeholder, viewer["userID"])
+        assertEquals(listOf(placeholder, 3L), viewer["ids"])
+        @Suppress("UNCHECKED_CAST")
+        val line = File(dir, "events.ndjson").readLines().map { MiniJson.parse(it) as Map<String, Any?> }.single { it["ev"] == "request" }
+        @Suppress("UNCHECKED_CAST")
+        val fields = (line["body"] as Map<String, Any?>)["fields"] as List<List<String>>
+        assertEquals(mapOf("actorID" to placeholder, "count" to 5L), MiniJson.parse(fields.single()[1]))
+        assertFalse(dir.walkTopDown().filter { it.isFile }.any { it.readText().contains(cookie) })
+    }
+
+    @Test
     fun unfinalizedSessionsAreDeletedAtStart() {
         val open = store.create("open1")
         open.append(1, listOf(CaptureItem.Line("{}"), body("secret $token")))

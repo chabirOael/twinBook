@@ -9,6 +9,8 @@ import { l1Placeholder } from "../src/lib/redact";
 import { rescrubSession } from "../tools/rescrub";
 import { formatScan, isOpaque, scanSession } from "../tools/opaqueScan";
 import { writeFinalizedSession } from "../tools/sessionIo";
+import { Session } from "../tools/findings/session";
+import { TaintScrubber } from "../src/lib/taint";
 
 const enc = new TextEncoder();
 const CAMEL = "CamelTokenValue123456";
@@ -89,5 +91,56 @@ describe("opaque-value scan", () => {
     expect(isOpaque("https://www.facebook.com/a/b/c")).toBe(false);
     expect(isOpaque(l1Placeholder(20))).toBe(false);
     expect(isOpaque("scontent.fdoh1-1.fna.fbcdn.net")).toBe(false);
+  });
+});
+
+describe("tainted numbers: sessions before and after the quoted placeholder", () => {
+  const USER = "100012345678";
+  function sessionWith(bodies: Record<string, string>): string {
+    const root = mkdtempSync(join(tmpdir(), "bare-"));
+    const dir = join(root, "20261002-000001-site");
+    const rids = Object.keys(bodies);
+    const lines = [
+      { v: 1, ev: "start", rid: "", profiles: ["site"] },
+      ...rids.flatMap((rid) => [
+        { v: 1, ev: "request", rid, profile: "site", own: true, t: 1, d: { url: "https://www.facebook.com/api/graphql/", method: "POST", type: "xmlhttprequest" }, body: { kind: "none" } },
+        { v: 1, ev: "body", rid, profile: "site", file: `bodies/${rid}-1.res`, status: "complete" },
+      ]),
+    ];
+    const files = new Map<string, string>([
+      ["events.ndjson", lines.map((l) => JSON.stringify(l)).join("\n") + "\n"],
+      ["session.json", JSON.stringify({ format: 1, id: "20261002-000001-site", profiles: ["site"] })],
+      ...rids.map((rid) => [`bodies/${rid}-1.res`, bodies[rid]!] as [string, string]),
+    ]);
+    writeFinalizedSession(dir, files);
+    return dir;
+  }
+
+  it("a session finalized before the change (bare placeholders) is still read", () => {
+    const old = `{"data":{"viewer":{"id":!T:cookie:c_user!,"ids":[!T:cookie:c_user!, 2]}}}\n{"data":{"x":1},"path":["a"]}\n`;
+    const s = new Session(sessionWith({ "1": old, "2": `for (;;);{"a":!T:cookie:c_user!}for (;;);{"b":1}` }));
+    const nd = s.ndjson(s.recs.get("1")!);
+    expect(nd.failed).toBe(0);
+    expect(nd.docs).toHaveLength(2);
+    expect(nd.docs[0]).toEqual({ data: { viewer: { id: 0, ids: [0, 2] } } });
+    const g = s.guarded(s.recs.get("2")!);
+    expect([g.docs.length, g.failed]).toEqual([2, 0]);
+    expect(s.repairedPlaceholders).toBe(3);
+  });
+
+  it("a body scrubbed by the current layer 2 is valid JSON as recorded, and the label is kept", () => {
+    const scrubber = new TaintScrubber([{ value: USER, label: "cookie:c_user" }]);
+    const raw = `{"data":{"viewer":{"id":${USER},"ids":[${USER}, 2],"s":"{\\"actor\\":${USER}}","name":"${USER}"}}}\n`;
+    const scrubbed = scrubber.scrub(bytesToLatin1(enc.encode(raw))).text;
+    const s = new Session(sessionWith({ "1": scrubbed }));
+    const nd = s.ndjson(s.recs.get("1")!);
+    expect(nd.failed).toBe(0);
+    expect(s.repairedPlaceholders).toBe(0);
+    const doc = nd.docs[0] as { data: { viewer: { id: string; ids: unknown[]; s: string; name: string } } };
+    expect(doc.data.viewer.id).toBe("!T:cookie:c_user!");
+    expect(doc.data.viewer.ids).toEqual(["!T:cookie:c_user!", 2]);
+    expect(JSON.parse(doc.data.viewer.s)).toEqual({ actor: "!T:cookie:c_user!" });
+    expect(doc.data.viewer.name).toBe("!T:cookie:c_user!");
+    expect(scrubbed.includes(USER)).toBe(false);
   });
 });

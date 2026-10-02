@@ -14,6 +14,10 @@
 //    bytes are skipped. If two values share a variant, the first value's label wins.
 // 3. Data is scanned as bytes from left to right. At each position the longest variant that
 //    matches is replaced by `!T:<label>!` and the scan continues after it.
+// 4. A match that is a whole JSON number (the value is a number literal, the nearest
+//    non-blank byte before it is `:`, `,` or `[`, and after it `,`, `]` or `}`) is replaced by
+//    the placeholder as a JSON string, so the document stays valid JSON. The quotes are escaped
+//    for the depth of JSON-in-a-string the match sits at (see quoteAt).
 
 import { isPlaceholder, l2Placeholder, RULES, sanitizeLabel, type Secret } from "./redact";
 import { bytesToLatin1 } from "./bytes";
@@ -68,6 +72,48 @@ interface Pattern {
   /** The variant as a latin1 string of its UTF-8 bytes. */
   bytes: string;
   label: string;
+  /** True if the variant is a JSON number literal (a numeric secret such as a user id). */
+  numeric: boolean;
+}
+
+const NUMBER_LITERAL = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
+
+function isBlank(c: string | undefined): boolean {
+  return c === " " || c === "\t" || c === "\n" || c === "\r";
+}
+
+/**
+ * The quote to put around the placeholder that replaces the match at [start, end), or undefined
+ * if the match is not a whole JSON number.
+ *
+ * Depth: JSON inside a JSON string writes its quotes as `\"`, inside that as `\\\"`, and so on.
+ * The nearest quote before the match belongs to the match's own level (a key, or the end of the
+ * previous string). With b backslashes before that quote, the level is the number of trailing
+ * zero bits of b + 1 (an escaped backslash before a closing quote adds pairs). A quote followed
+ * by `[` or `{` opens a string that holds JSON: one level deeper. A quote followed by anything
+ * else but `:`, `,`, `]` or `}` opens a plain string, so the match is text inside it.
+ */
+export function quoteAt(data: string, start: number, end: number): string | undefined {
+  let j = start - 1;
+  while (j >= 0 && isBlank(data[j])) j--;
+  if (j < 0 || (data[j] !== ":" && data[j] !== "," && data[j] !== "[")) return undefined;
+  let k = end;
+  while (k < data.length && isBlank(data[k])) k++;
+  if (k >= data.length || (data[k] !== "," && data[k] !== "]" && data[k] !== "}")) return undefined;
+  const q = data.lastIndexOf('"', j);
+  let depth = 0;
+  if (q >= 0) {
+    let b = 0;
+    while (q - b - 1 >= 0 && data[q - b - 1] === "\\") b++;
+    for (let n = b + 1; n % 2 === 0; n /= 2) depth++;
+    let a = q + 1;
+    while (a < data.length && isBlank(data[a])) a++;
+    if (data[a] === "[" || data[a] === "{") depth++;
+    // Any other quote that is not followed by `:`, `,`, `]` or `}` opens a string the match
+    // lies in (a list such as "a,<id>,b"): not a number.
+    else if (data[a] !== ":" && data[a] !== "," && data[a] !== "]" && data[a] !== "}") return undefined;
+  }
+  return "\\".repeat(2 ** Math.min(depth, 6) - 1) + '"';
 }
 
 export interface ScrubResult {
@@ -95,7 +141,7 @@ export class TaintScrubber {
         seen.add(bytes);
         const first = bytes.charCodeAt(0);
         const list = this.byFirst.get(first) ?? [];
-        list.push({ bytes, label: sanitizeLabel(s.label) });
+        list.push({ bytes, label: sanitizeLabel(s.label), numeric: NUMBER_LITERAL.test(bytes) });
         this.byFirst.set(first, list);
       }
     }
@@ -118,7 +164,9 @@ export class TaintScrubber {
         i++;
         continue;
       }
-      out += data.slice(last, i) + l2Placeholder(hit.label);
+      const quote = hit.numeric ? quoteAt(data, i, i + hit.bytes.length) : undefined;
+      const placeholder = l2Placeholder(hit.label);
+      out += data.slice(last, i) + (quote === undefined ? placeholder : quote + placeholder + quote);
       counts[hit.label] = (counts[hit.label] ?? 0) + 1;
       i += hit.bytes.length;
       last = i;
