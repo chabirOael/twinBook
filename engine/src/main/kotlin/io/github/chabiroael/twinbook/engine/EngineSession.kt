@@ -26,6 +26,36 @@ enum class UserAgentProfile(internal val userAgentMode: Int, internal val viewpo
     DESKTOP(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP, GeckoSessionSettings.VIEWPORT_MODE_DESKTOP),
 }
 
+/** A top-level navigation, as a [NavigationPolicy] sees it. */
+data class NavigationRequest(
+    val uri: String,
+    /** URL of the page that started it, if known. */
+    val triggerUri: String?,
+    /** A request for a new window (`target=_blank`, `window.open`). */
+    val newWindow: Boolean,
+    /** Gecko saw a user gesture (or the transient activation that follows one). */
+    val userGesture: Boolean,
+    /** A server redirect of an earlier navigation. */
+    val isRedirect: Boolean,
+)
+
+/** What a session does with a navigation its [NavigationPolicy] was asked about. */
+sealed interface NavigationDecision {
+    /** Load it here (scheme safety still applies; a new window loads in place). */
+    data object Allow : NavigationDecision
+
+    /** Do not load it (the policy may have handed it to another app). */
+    data object Deny : NavigationDecision
+
+    /** Do not load it; load [uri] in this session instead. */
+    data class LoadInstead(val uri: String) : NavigationDecision
+}
+
+/** Decides top-level navigations of a session. Called on the main thread; must not block. */
+fun interface NavigationPolicy {
+    fun decide(request: NavigationRequest): NavigationDecision
+}
+
 /** Navigation state of a session. [loadCount] increases on every finished page load. */
 data class PageState(
     /** URL of the document shown (from location changes, so a denied load never shows here). */
@@ -49,6 +79,10 @@ data class PageState(
     val newWindowsInPlace: Int = 0,
     /** Permission requests that were denied. */
     val permissionsDenied: Int = 0,
+    /** Top-level navigations the [EngineSession.navigationPolicy] denied or replaced. */
+    val policyDenied: Int = 0,
+    /** Times the session was reopened after a crash or kill ([EngineSession.recover]). */
+    val recoveries: Int = 0,
 )
 
 /**
@@ -56,15 +90,18 @@ data class PageState(
  * jar and the twin-bridge extension. A session is headless until it is attached to a
  * GeckoView; headless sessions load pages and run scripts normally.
  *
- * Navigation safety, for every session: only the schemes in [ALLOWED_SCHEMES] load; anything
- * else (custom schemes, `intent:`) is ignored and never leaves the app. A request to open a new
- * window loads in this session. Every permission request is denied.
+ * Navigation safety, for every session: only the schemes in [ALLOWED_SCHEMES] (plus the
+ * session's extra schemes) load; anything else (custom schemes, `intent:`) is ignored and never
+ * leaves the app unless a [navigationPolicy] hands it on. A request to open a new window loads
+ * in this session. Every permission request is denied.
  */
 class EngineSession internal constructor(
     private val engine: Engine,
     val profile: UserAgentProfile,
     val name: String,
     trackingProtection: TrackingProtection,
+    /** Schemes this session loads besides [ALLOWED_SCHEMES], e.g. `moz-extension` for an extension's own pages. */
+    private val extraSchemes: Set<String> = emptySet(),
 ) {
     val geckoSession: GeckoSession
 
@@ -77,6 +114,17 @@ class EngineSession internal constructor(
     val isHeadless: Boolean get() = view == null
 
     val isOpen: Boolean get() = geckoSession.isOpen
+
+    /**
+     * Decides every top-level navigation (and new-window request) before scheme safety applies.
+     * Null keeps the default: allowed schemes load, everything else is ignored. Main thread only.
+     */
+    var navigationPolicy: NavigationPolicy? = null
+
+    private val stateFlow = MutableStateFlow<String?>(null)
+
+    /** Gecko's session state (history and the current page) as JSON, updated as it changes; see [restoreState]. */
+    val sessionState: StateFlow<String?> = stateFlow.asStateFlow()
 
     init {
         val settings = GeckoSessionSettings.Builder()
@@ -97,6 +145,10 @@ class EngineSession internal constructor(
             override fun onPageStop(session: GeckoSession, success: Boolean) {
                 val p = pageFlow.value
                 pageFlow.value = p.copy(loading = false, loadCount = p.loadCount + 1, lastLoadSucceeded = success)
+            }
+
+            override fun onSessionStateChange(session: GeckoSession, sessionState: GeckoSession.SessionState) {
+                stateFlow.value = sessionState.toString()
             }
         }
         geckoSession.contentDelegate = object : GeckoSession.ContentDelegate {
@@ -132,8 +184,18 @@ class EngineSession internal constructor(
             }
 
             override fun onLoadRequest(session: GeckoSession, request: LoadRequest): GeckoResult<AllowOrDeny> {
+                val newWindow = request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW
+                val decision = navigationPolicy?.decide(NavigationRequest(request.uri, request.triggerUri, newWindow, request.hasUserGesture, request.isRedirect))
+                when (decision) {
+                    null, NavigationDecision.Allow -> Unit
+                    NavigationDecision.Deny -> return policyDenied()
+                    is NavigationDecision.LoadInstead -> {
+                        later { if (geckoSession.isOpen) geckoSession.loadUri(decision.uri) }
+                        return policyDenied()
+                    }
+                }
                 if (!isAllowed(request.uri)) return GeckoResult.fromValue(AllowOrDeny.DENY)
-                if (request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW) {
+                if (newWindow) {
                     openInPlace(request.uri)
                     return GeckoResult.fromValue(AllowOrDeny.DENY)
                 }
@@ -143,8 +205,17 @@ class EngineSession internal constructor(
             override fun onSubframeLoadRequest(session: GeckoSession, request: LoadRequest): GeckoResult<AllowOrDeny> =
                 GeckoResult.fromValue(if (isAllowed(request.uri)) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
 
+            // window.open. Popups without a user gesture reach the prompt delegate's onPopupPrompt
+            // first; a session whose delegate refuses them gets here only after a gesture.
             override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
-                if (isAllowed(uri)) openInPlace(uri)
+                when (val decision = navigationPolicy?.decide(NavigationRequest(uri, pageFlow.value.url, newWindow = true, userGesture = true, isRedirect = false))) {
+                    null, NavigationDecision.Allow -> if (isAllowed(uri)) openInPlace(uri)
+                    NavigationDecision.Deny -> policyDenied()
+                    is NavigationDecision.LoadInstead -> {
+                        policyDenied()
+                        openInPlace(decision.uri)
+                    }
+                }
                 return null
             }
         }
@@ -185,7 +256,7 @@ class EngineSession internal constructor(
 
     private fun isAllowed(uri: String): Boolean {
         val scheme = uri.substringBefore(':', "").lowercase()
-        if (scheme in ALLOWED_SCHEMES) return true
+        if (scheme in ALLOWED_SCHEMES || scheme in extraSchemes) return true
         Log.i(Engine.TAG, "session $name: ignored a load with scheme '$scheme'")
         pageFlow.value = pageFlow.value.copy(blockedLoads = pageFlow.value.blockedLoads + 1, lastBlockedScheme = scheme)
         return false
@@ -194,7 +265,16 @@ class EngineSession internal constructor(
     private fun openInPlace(uri: String) {
         pageFlow.value = pageFlow.value.copy(newWindowsInPlace = pageFlow.value.newWindowsInPlace + 1)
         // Not from inside the delegate call that asked for the new window.
-        android.os.Handler(android.os.Looper.getMainLooper()).post { if (geckoSession.isOpen) geckoSession.loadUri(uri) }
+        later { if (geckoSession.isOpen) geckoSession.loadUri(uri) }
+    }
+
+    private fun policyDenied(): GeckoResult<AllowOrDeny> {
+        pageFlow.value = pageFlow.value.copy(policyDenied = pageFlow.value.policyDenied + 1)
+        return GeckoResult.fromValue(AllowOrDeny.DENY)
+    }
+
+    private fun later(block: () -> Unit) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post(block)
     }
 
     private fun denied(what: String) {
@@ -205,6 +285,34 @@ class EngineSession internal constructor(
     /** Main thread only. */
     fun goBack() {
         geckoSession.goBack()
+    }
+
+    /**
+     * Restores a state saved from [sessionState]: Gecko rebuilds the history and loads its current
+     * entry. Returns false if [json] is not a session state. Main thread only.
+     */
+    fun restoreState(json: String): Boolean {
+        val state = runCatching { GeckoSession.SessionState.fromString(json) }.getOrNull() ?: return false
+        if (state.isEmpty()) return false
+        geckoSession.restoreState(state)
+        return true
+    }
+
+    /**
+     * After the content process crashed or was killed ([PageState.crashed]) the GeckoSession is
+     * closed. Reopens it and restores the last known state (history and page), or loads
+     * [fallbackUrl] when there is none. Main thread only.
+     */
+    fun recover(fallbackUrl: String?) {
+        if (!geckoSession.isOpen) {
+            geckoSession.open(engine.runtime)
+            geckoSession.setActive(true)
+        }
+        val p = pageFlow.value
+        pageFlow.value = p.copy(crashed = false, recoveries = p.recoveries + 1)
+        val state = stateFlow.value
+        Log.i(Engine.TAG, "session $name: recovering (${if (state != null) "restoring state" else "loading $fallbackUrl"})")
+        if (state == null || !restoreState(state)) fallbackUrl?.let { geckoSession.loadUri(it) }
     }
 
     /** Main thread only. */
