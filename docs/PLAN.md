@@ -1,6 +1,6 @@
 # twinBook master plan
 
-Status: M2a accepted 2026-10-02. Next: the owner's capture session, then M2b.
+Status: M2a merged, owner's first capture done 2026-10-02. M2b prompt issued 2026-10-02.
 
 This file is the single source of truth for the project. The planner (Claude, in the
 planning conversation) owns it and updates it after every milestone report. Build
@@ -66,6 +66,16 @@ native-feeling UI.
   telemetry to `/a/bz`, the desktop site to `/ajax/bz`. On the mobile site the `__a`
   field carries a long opaque value. No service-worker fetch was seen while logged out.
   The logged-out mobile page loads Google advertising pixels through `fbsbx.com`.
+- Seen in the owner's first logged-in capture, 2026-10-02, from metadata only: the
+  desktop site made 31 GraphQL requests in 3 minutes, including four feed pagination
+  responses of 0.6 to 2.1 MB delivered in 6 to 19 chunks, with content type
+  `text/html`. All 85 own-host responses passed through the observing filter
+  unchanged. The logged-in mobile site made no XHR or fetch at all while the owner
+  scrolled, opened comments, watched videos and opened a profile. Its only own-host
+  request was a beacon to `/ajax/weblite_load_logging/`. Its data therefore travels
+  over a connection opened at page load, most likely a WebSocket, which the stream
+  filter cannot see. Consequence under review: ads on the mobile site cannot be
+  removed at the data layer; the web fallback would rely on cosmetic filtering.
 - Not yet verified: logged-in payload shapes; whether `/api/graphql/` responses and
   service-worker traffic pass through the stream filter when logged in; cross-site
   replay against the real site. The owner's capture and M2b close the first two, M5
@@ -365,6 +375,9 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   about 15 to 20 ms per request is accepted for the owner's session.
 - After accepting a report, the planner commits its plan update on the milestone
   branch, so the owner's pull request carries the work and the plan together.
+- The GitHub repository is public. Fixtures are structure-only and are committed only
+  when the leak test finds nothing. Raw recordings, findings and reports never contain
+  personal data.
 - Known gap: the final revision of `tools/setup-toolchain.sh` has not been run against
   an empty home directory. Its JDK and command-line-tools steps were. Revisit in M12.
 
@@ -374,9 +387,10 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 |---|---|---|
 | M0 | accepted 2026-10-02, merged into main through pull request 1 | docs/reports/M0.md |
 | M1 | gate passed, accepted 2026-10-02, merged into main through pull request 2 | docs/reports/M1.md |
-| M2a | accepted 2026-10-02. Branch `m2a-capture-tooling`, waiting for the owner's pull request. | docs/reports/M2a.md |
-| Owner capture | waiting for the owner | none |
-| M2b to M12 | not started | none |
+| M2a | accepted 2026-10-02, merged into main through pull request 3 | docs/reports/M2a.md |
+| Owner capture | first pass done 2026-10-02: sessions `20261002-172602-site` (mobile) and `20261002-172927-site` (desktop). Neither contains a page document. A short supplementary capture with a reload is requested. | none |
+| M2b | prompt issued 2026-10-02, docs/prompts/M2b.md | pending |
+| M3 to M12 | not started | none |
 
 ## 10. Change log
 
@@ -425,3 +439,10 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   timing. Treated as a load-dependent timing issue, assigned to M3. The checklist now
   tells the owner how to type the password safely. The daily build survived both full
   runs, the M1 device scripts and an in-place update: same install time, marker intact.
+- 2026-10-02: owner merged M2a (pull request 3) and recorded two logged-in sessions.
+  Planner inspected metadata only. The desktop session is rich enough for the M2b gate.
+  The mobile session shows no data requests, which points to a socket-based "web lite"
+  client. Neither session has a page document because no reload followed the start of
+  the capture; M2b makes the capture browser reload automatically. M2b prompt issued,
+  with a secret-hardening step before any body is read and a structure-only rule for
+  fixtures because the repository is public.
