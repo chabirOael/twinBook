@@ -18,8 +18,12 @@ state() {
 }
 
 adb shell pm list packages "${PKG}" | tr -d '\r' | grep -qx "package:${PKG}" || tools/daily-install.sh
+# Open the app once so its private storage and GeckoView profile exist, as after a login.
+tools/daily-launch.sh > /dev/null
+sleep 10
+adb shell input keyevent KEYCODE_HOME
 marker="survives-$(date +%s)"
-adb shell run-as "${PKG}" sh -c "'echo ${marker} > files/twinbook-marker.txt'"
+adb shell run-as "${PKG}" sh -c "'mkdir -p files && echo ${marker} > files/twinbook-marker.txt'"
 first="$(adb shell dumpsys package "${PKG}" | grep firstInstallTime | tr -d '\r' | sed 's/^ *//')"
 echo "== before"
 state
