@@ -5,8 +5,11 @@
 //   scan <session dir>...                  keys whose values are long, opaque and recur
 //   findings <session dir>... [--rules f]  the numbers of docs/findings/payloads.md
 //   keypaths <key> <session dir>...        where a key occurs in the feed edges (exploration)
+//   fixtures <session dir>... [--census]   sanitized fixtures into fixtures/ (fixtures/README.md)
 import { join } from "node:path";
 import { findingsReport, keyPathsReport } from "./findings/report";
+import { buildFixtureManifest } from "./fixtures/manifest";
+import { buildFixtures, readAllowlist, writeFixtures } from "./fixtures/sanitize";
 import { ancestorScan, formatScan, scanSession } from "./opaqueScan";
 import { Session } from "./findings/session";
 import { rescrubSession } from "./rescrub";
@@ -31,7 +34,7 @@ function allDocuments(dir: string): unknown[] {
 
 function usage(): never {
   process.stderr.write(
-    "usage: capture-tools rescrub <session dir>... [--replace]\n       capture-tools scan <session dir>...\n       capture-tools findings <session dir>... [--rules <file>]\n       capture-tools keypaths <key> <session dir>...\n",
+    "usage: capture-tools rescrub <session dir>... [--replace]\n       capture-tools scan <session dir>...\n       capture-tools findings <session dir>... [--rules <file>]\n       capture-tools keypaths <key> <session dir>...\n       capture-tools fixtures <session dir>... [--census]\n",
   );
   process.exit(2);
 }
@@ -61,6 +64,24 @@ switch (cmd) {
   case "findings": {
     if (paths.length === 0) usage();
     process.stdout.write(findingsReport(paths, rulesFile) + "\n");
+    break;
+  }
+  case "fixtures": {
+    if (paths.length === 0) usage();
+    const dir = join(process.env["TWINBOOK_ROOT"] ?? "..", "fixtures");
+    const sessions = paths.map((p) => new Session(p));
+    const set = buildFixtures(sessions, readAllowlist(dir));
+    if (flags.has("--census")) {
+      process.stdout.write(`enum-like candidates (key=VALUE count), to review for fixtures/enum-allowlist.json:\n`);
+      for (const [k, v] of [...set.stats.enumCandidates].sort()) process.stdout.write(`  ${String(v).padStart(5)}  ${k}\n`);
+      break;
+    }
+    const manifest = buildFixtureManifest(sessions, set, rulesFile);
+    writeFixtures(dir, set, manifest);
+    const st = set.stats;
+    process.stdout.write(
+      `fixtures: ${set.files.size} files, ${set.entries.reduce((a, e) => a + e.bytes, 0)} bytes; strings ${st.strings} (kept ${st.kept}, replaced ${st.replaced}, URLs ${st.urls}), numbers remapped ${st.numbersRemapped}, keys replaced ${st.keysReplaced}, enum candidates ${st.enumCandidates.size}\n`,
+    );
     break;
   }
   case "keypaths": {
