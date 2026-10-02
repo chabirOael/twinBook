@@ -1,6 +1,6 @@
 # twinBook master plan
 
-Status: M0 accepted and merged 2026-10-02. M1 prompt issued 2026-10-02.
+Status: M1 merged 2026-10-02. M2a prompt issued 2026-10-02.
 
 This file is the single source of truth for the project. The planner (Claude, in the
 planning conversation) owns it and updates it after every milestone report. Build
@@ -43,8 +43,22 @@ native-feeling UI.
   GeckoView supports built-in WebExtensions, blocking webRequest, and native messaging.
 - Facebook async requests carry rotating tokens (fb_dtsg, jazoest, lsd, __rev, __req,
   hsi, __s). A replaying client must read them from live traffic.
-- Not yet verified: logged-in payload shapes, stream filtering of streamed GraphQL
-  responses on GeckoView specifically, real memory numbers. Milestones M1 and M2 close
+- Proven in M1 on GeckoView 157 against a local mock (docs/reports/M1.md): response
+  streams are filtered from the extension background for XHR, fetch and documents,
+  line by line, without delaying earlier lines; the page's native functions stay
+  untouched (95 in-page integrity checks); sessions with different user agents share
+  one cookie jar; headless sessions run at full speed; cookies with an expiry and
+  extension storage survive a process kill; a rebuilt extension takes effect on app
+  update with data kept.
+- GeckoView start-up facts from M1: an already-installed extension starts its
+  background script only when the first session opens; Gecko can lose an add-on's
+  start-up state if the process dies right after install; `ensureBuiltIn` reinstalls
+  whenever the version string differs.
+- Measured in M1 on the emulator: debug APK 198 MB with two ABIs, about 80 to 87 MB
+  per ABI compressed; memory 451 MiB PSS with no page and 558 MiB with one page;
+  extension ready about 3.9 s and first page about 5.2 s after process start.
+- Not yet verified: logged-in payload shapes; stream filtering, service-worker
+  behaviour and cross-site replay against the real site over HTTPS. M2a and M2b close
   these.
 
 ## 4. Architecture in one page
@@ -144,21 +158,42 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 - If the gate fails: stop. Fallback options are an in-app local proxy or reducing the
   product to cosmetic filtering. The planner decides.
 
-### M2. Capture tooling and payload findings (M, GATE)
-- Goal: know exactly what Facebook sends when logged in, and freeze it as fixtures.
-- Scope: debug-only recorder in twin-bridge for GraphQL and Bloks request and response
-  pairs. Pull script. Sanitizer that strips cookies and tokens and pseudonymizes names
-  and IDs. HAR importer for desktop captures. Scripted capture sessions on the
-  emulator: feed scroll, comments, video tab, notifications, a profile, in both the
-  Comet and the Bloks session.
-- Deliverable docs/findings/payloads.md: query friendly names and variable shapes,
-  pagination cursors, ad and suggestion markers with counts, video URL fields, token
-  fields, Bloks fetch endpoints and the sponsored subtree signature, proposed rules v1.
-- Also in scope: the first run of the stream filter and the replay path against real
-  responses, in observe-only mode, to confirm what M1 proved on the mock.
-- Owner input before start: log in with the test account in the M1 build on the
-  emulator. Optional but valuable: HAR files from an older account, since a fresh
-  account may be shown few ads.
+### M2a. Capture tooling and real-site wiring (L)
+- Goal: an app build in which the owner can log in and browse the real site while
+  twin-bridge records what it sees, changing nothing.
+- Scope: site profiles for the mock and the real hosts. Observe-only filter mode: the
+  rule runs and reports, every byte is forwarded unchanged. Recorder for request
+  metadata, form bodies and textual response bodies, sent losslessly over the bridge
+  to app-private storage. Two-layer redaction: cookie and token values replaced at the
+  source, then a taint pass at finalize that scrubs every remembered secret from the
+  whole session; unfinalized sessions are deleted. Capture browser screen with a
+  mobile-site and a desktop-site session. A login-safe `daily` build that tests never
+  touch. Pull script. Owner checklist. HAR importer. Fix for the M1 line-loss defect.
+- Allowed traffic: at most 12 logged-out page loads of the real site to prove the
+  wiring. No login, no form submission, no other tool contacting the site.
+- Exit evidence: checks C1 to C21 in docs/prompts/M2a.md; docs/CAPTURE.md and
+  docs/CAPTURE-CHECKLIST.md.
+
+### Owner step between M2a and M2b
+- Start the emulator in a visible window, log in with the test account in the `daily`
+  build, and follow the capture checklist once in mobile mode and once in desktop
+  mode: scroll the feed past several sponsored posts, open comments, watch videos,
+  open notifications, open a profile. About ten minutes. The owner does the browsing,
+  so the logged-in account is never driven by an agent.
+- Optional: HAR files from an older account, since a fresh account may see few ads.
+
+### M2b. Payload findings and fixtures (M, GATE)
+- Goal: know exactly what the site sends when logged in, and freeze it as fixtures.
+- Scope: pull the owner's captures. Build the sanitizer and pseudonymizer with the
+  real shapes in hand, and commit fixtures. Findings document
+  docs/findings/payloads.md: query friendly names and variable shapes, pagination
+  cursors, ad and suggestion markers with counts, video URL fields, token fields, Bloks
+  fetch endpoints and the sponsored subtree signature, proposed rules v1. Engine facts
+  on real traffic: whether responses pass through a service worker, whether the stream
+  filter saw them, encodings, line sizes, numbers that do not survive a JSON round
+  trip, which login cookies have an expiry, request headers of the real client compared
+  with what replay path B sends, candidate anchor URLs.
+- No live replay and no request the site's own client did not make. Analysis only.
 - Exit evidence: sanitized fixtures committed; findings document; no secrets in git.
 - If the gate fails (Comet data not obtainable or not usable): native screens are
   dropped or re-based on Bloks; the product falls back to the clean web twin.
@@ -171,6 +206,9 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   separate clean session, redirect unwrapping, tracking-parameter stripping. File
   upload, downloads, camera and microphone permission prompts. Pull to refresh. Dark
   mode. Session kept alive across tab switches.
+- From the M1 review: the first site load waits for the engine to report ready, since
+  pages loaded earlier are not filtered. Measure installing the extension on every
+  start against the current start-up contract and keep the faster reliable one.
 - Exit evidence: scripted on-device walkthrough with screenshots; login survives app
   restart; instrumented tests for navigation and link handling.
 
@@ -193,6 +231,9 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   calls for feed page, comments page, notifications, profile timeline. Rate limiting,
   backoff, handling of revision-refresh signals, re-harvest when templates go stale.
   Comet page unloaded after harvest.
+- Replay path chosen in M1: requests are made from an anchor page, a same-origin page
+  of the site with no site JavaScript, held in a headless session. Fallback: fetch from
+  the extension background with Origin, Referer and User-Agent rewritten.
 - Exit evidence: on-device test that replays several consecutive feed pages and one
   comments page with valid data while no Comet page is loaded; memory before and after
   unload.
@@ -266,7 +307,7 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 | When | What |
 |---|---|
 | Before M1 | Permanent KVM fix (`sudo usermod -aG kvm $USER`, then restart WSL). Correct the git author email in `~/.gitconfig`. |
-| Before M2 | Test account login in the M1 build; optional HAR files |
+| After M2a, before M2b | Test account login in the M2a build and the ten-minute capture checklist; optional HAR files |
 | Before M8 | Permission to post real reactions and comments from the test account |
 | Before M7 | Real phone over wireless debugging |
 | Before M12 | Signing key decision, app name and icon, release channel |
@@ -286,6 +327,18 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   a committed allowlist with a reason per entry.
 - The planner verifies every report by re-running the checks in a fresh clone of the
   milestone branch.
+- Engine rules from M1: load site pages only after `Engine.awaitReady()`. Built-in
+  extension versions are stamped per build. The engine opens a bootstrap session at
+  start and reinstalls the extension if its background has not started after 10 s.
+  Accepted as the start-up contract until M3 measures the alternative.
+- Debug builds pack native libraries compressed. Release packaging is decided in M11.
+- The `diag.*` bridge methods are compiled out of release builds when the release
+  build type is set up in M12.
+- Native UI must never wait for the engine: cached content renders first, the engine
+  comes up behind it.
+- The owner's logged-in session lives in the `daily` build of the app. No agent may
+  uninstall it, clear its data, or wipe or recreate the AVD. Tests use the debug build
+  and the engine test app only.
 - Known gap: the final revision of `tools/setup-toolchain.sh` has not been run against
   an empty home directory. Its JDK and command-line-tools steps were. Revisit in M12.
 
@@ -294,8 +347,9 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 | Milestone | Status | Report |
 |---|---|---|
 | M0 | accepted 2026-10-02, merged into main through pull request 1 | docs/reports/M0.md |
-| M1 | prompt issued 2026-10-02, docs/prompts/M1.md | pending |
-| M2 to M12 | not started | none |
+| M1 | gate passed, accepted 2026-10-02, merged into main through pull request 2 | docs/reports/M1.md |
+| M2a | prompt issued 2026-10-02, docs/prompts/M2a.md | pending |
+| M2b to M12 | not started | none |
 
 ## 10. Change log
 
@@ -315,3 +369,16 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   widened to include persistence, extension update, headless sessions, document
   filtering and replay probes; size raised to L. GeckoView pinned to
   157.0.20260924084938 (minSdk 26, per-ABI artifacts available). M1 prompt issued.
+- 2026-10-02: M1 report reviewed and accepted. Planner re-ran in a fresh clone:
+  `tools/check.sh` (60 extension tests, 19 JVM tests, lint clean), the 28 instrumented
+  tests, the persistence script and the extension-update script, all pass; lab
+  screenshot inspected. Gate verdict: pass. Decisions: start-up contract accepted,
+  replay path B primary, diag methods compiled out at M12, debug packaging stays
+  compressed. M2 split into M2a (tooling, no account), an owner capture step, and M2b
+  (findings), because the M1 app cannot load the real site and an agent should not
+  drive a logged-in account. Defect to fix in M2a: `NdjsonStreamFilter.push` can lose
+  the bytes of the current line if `processLine` throws unexpectedly.
+- 2026-10-02: owner merged M1 through pull request 2. M2a prompt issued. The sanitizer
+  moved from M2a to M2b so it is built against real shapes. Added the login-safe
+  `daily` build after noticing that instrumented test runs uninstall the debug app,
+  which would have destroyed the owner's login.
