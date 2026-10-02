@@ -26,7 +26,7 @@ if ! adb get-state > /dev/null 2>&1; then
   exit 1
 fi
 
-on_device() { adb shell run-as "${PKG}" sh -c "'$1'" | tr -d '\r'; }
+on_device() { adb shell run-as "${PKG}" sh -c "'$1'" < /dev/null | tr -d '\r'; }
 
 list() {
   on_device 'cd files/captures 2>/dev/null || exit 0; for d in *; do [ -d "$d" ] || continue; if [ -f "$d/FINALIZED" ]; then s=finalized; else s=NOT-finalized; fi; echo "$d $s $(du -sk "$d" | cut -f1)KiB"; done'
@@ -45,7 +45,7 @@ pull_one() {
   local tmp="${OUT}/.partial-${id}"
   rm -rf "${tmp}"
   mkdir -p "${tmp}"
-  adb exec-out run-as "${PKG}" tar -C files/captures -cf - "${id}" | tar -x -C "${tmp}"
+  adb exec-out run-as "${PKG}" tar -C files/captures -cf - "${id}" < /dev/null | tar -x -C "${tmp}"
   local dir="${tmp}/${id}"
   (
     cd "${dir}"
