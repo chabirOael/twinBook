@@ -26,4 +26,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "twinBook"
 
-include(":app", ":engine", ":data", ":mockserver")
+include(":app", ":engine", ":data", ":mockserver", ":capture")

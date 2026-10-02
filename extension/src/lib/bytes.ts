@@ -56,3 +56,30 @@ export function sampleOf(bytes: Uint8Array, max = 120): string {
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(0, max));
   return bytes.length > max ? `${text}…` : text;
 }
+
+/** Inverse of bytesToLatin1: chars U+0000..U+00FF back to bytes. */
+export function latin1ToBytes(text: string): Uint8Array {
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff;
+  return out;
+}
+
+/** Base64 of bytes, in pieces so large inputs do not overflow the argument list. */
+export function bytesToBase64(bytes: Uint8Array): string {
+  return btoa(bytesToLatin1(bytes));
+}
+
+export function base64ToBytes(b64: string): Uint8Array {
+  return latin1ToBytes(atob(b64));
+}
+
+/** Lower-case hex of bytes. */
+export function hex(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += b.toString(16).padStart(2, "0");
+  return s;
+}
+
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>)));
+}

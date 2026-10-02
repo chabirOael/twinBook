@@ -1,0 +1,183 @@
+{
+  "about": "Layer 1 redaction rules for twin-bridge captures (docs/CAPTURE.md section 5). Every entry has a 'why'. Values are replaced by a placeholder of the same length; names, keys and structure stay. Shape-only fields such as __rev, __req, __s, __hsi, __dyn, __csr, __user are deliberately absent.",
+  "version": 1,
+  "minTaintLength": 8,
+  "taintStopList": [
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "deleted"
+  ],
+  "headers": [
+    {
+      "name": "cookie",
+      "kind": "cookie",
+      "why": "Request cookies carry the login session (c_user, xs, datr, fr ...). Names stay, every value is replaced."
+    },
+    {
+      "name": "set-cookie",
+      "kind": "set-cookie",
+      "why": "Cookies the server sets. Name and attributes (Path, Domain, Expires, Max-Age, Secure, HttpOnly, SameSite) stay, the value is replaced."
+    },
+    {
+      "name": "authorization",
+      "kind": "value",
+      "why": "HTTP credentials (Basic, Bearer)."
+    },
+    {
+      "name": "proxy-authorization",
+      "kind": "value",
+      "why": "Proxy credentials."
+    },
+    {
+      "name": "x-fb-lsd",
+      "kind": "value",
+      "why": "Carries the lsd anti-forgery token on GraphQL requests."
+    },
+    {
+      "name": "x-fb-dtsg",
+      "kind": "value",
+      "why": "Would carry fb_dtsg if sent as a header."
+    },
+    {
+      "name": "x-csrftoken",
+      "kind": "value",
+      "why": "Generic anti-forgery token header."
+    },
+    {
+      "name": "x-csrf-token",
+      "kind": "value",
+      "why": "Generic anti-forgery token header."
+    },
+    {
+      "name": "x-xsrf-token",
+      "kind": "value",
+      "why": "Generic anti-forgery token header."
+    },
+    {
+      "name": "x-auth-token",
+      "kind": "value",
+      "why": "Generic session token header."
+    },
+    {
+      "name": "x-access-token",
+      "kind": "value",
+      "why": "Generic access token header."
+    }
+  ],
+  "keys": [
+    {
+      "name": "fb_dtsg",
+      "why": "Anti-forgery token bound to the logged-in session; sent as a form field on every async POST."
+    },
+    {
+      "name": "fb_dtsg_ag",
+      "why": "Variant of fb_dtsg used on GET requests."
+    },
+    {
+      "name": "async_get_token",
+      "why": "Holds the fb_dtsg_ag value inside page data."
+    },
+    {
+      "name": "lsd",
+      "why": "Anti-forgery token; also present in logged-out pages and login forms."
+    },
+    {
+      "name": "jazoest",
+      "why": "Checksum derived from fb_dtsg or lsd. Short, so it is only redacted where it appears under its key."
+    },
+    {
+      "name": "__a",
+      "why": "Usually '1' (shape only), but on the logged-out mobile site's /a/bz beacon it carried a long opaque value (seen in M2a); redacted until M2b shows what it is. '1' becomes '*', so the shape stays visible."
+    },
+    {
+      "name": "token",
+      "why": "Page data stores fb_dtsg and lsd as {\"token\": ...} (DTSGInitialData, LSD)."
+    },
+    {
+      "name": "access_token",
+      "why": "OAuth access token."
+    },
+    {
+      "name": "refresh_token",
+      "why": "OAuth refresh token."
+    },
+    {
+      "name": "id_token",
+      "why": "OpenID token."
+    },
+    {
+      "name": "oauth_token",
+      "why": "OAuth token."
+    },
+    {
+      "name": "auth_token",
+      "why": "Generic session credential."
+    },
+    {
+      "name": "session_key",
+      "why": "Session key."
+    },
+    {
+      "name": "sessionKey",
+      "why": "Session key, camel case."
+    },
+    {
+      "name": "session_token",
+      "why": "Session token."
+    },
+    {
+      "name": "csrf_token",
+      "why": "Anti-forgery token."
+    },
+    {
+      "name": "csrftoken",
+      "why": "Anti-forgery token."
+    },
+    {
+      "name": "xsrf_token",
+      "why": "Anti-forgery token."
+    },
+    {
+      "name": "nonce",
+      "why": "Login nonces are single-use credentials."
+    },
+    {
+      "name": "machine_id",
+      "why": "Device identifier that the login flow binds to the account (same value as the datr cookie)."
+    },
+    {
+      "name": "pass",
+      "why": "Password field of the login form."
+    },
+    {
+      "name": "password",
+      "why": "Password, in forms and in Bloks login parameters."
+    },
+    {
+      "name": "encpass",
+      "why": "Browser-encrypted password of the login form."
+    },
+    {
+      "name": "email",
+      "why": "Login identifier of the account."
+    },
+    {
+      "name": "contact_point",
+      "why": "Login identifier in Bloks login parameters."
+    },
+    {
+      "name": "contactpoint",
+      "why": "Login identifier."
+    },
+    {
+      "name": "approvals_code",
+      "why": "Two-factor code."
+    },
+    {
+      "name": "otp",
+      "why": "One-time code."
+    }
+  ]
+}

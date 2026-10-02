@@ -4,7 +4,6 @@ import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import io.github.chabiroael.twinbook.engine.Engine
-import io.github.chabiroael.twinbook.engine.EngineConfig
 import io.github.chabiroael.twinbook.engine.EngineSession
 import io.github.chabiroael.twinbook.engine.PageState
 import io.github.chabiroael.twinbook.engine.UserAgentProfile
@@ -21,7 +20,7 @@ import kotlinx.coroutines.launch
  * recreation.
  */
 class EngineLab private constructor(context: Context) {
-    val engine: Engine = Engine.start(context, EngineConfig(debug = BuildConfig.DEBUG))
+    val engine: Engine = AppEngine.engine(context)
     val session: EngineSession = engine.newSession(UserAgentProfile.MOBILE, "lab")
 
     private val extensionVersionFlow = MutableStateFlow<String?>(null)

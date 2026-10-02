@@ -3,9 +3,13 @@ package io.github.chabiroael.twinbook.engine
 import android.app.Instrumentation
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.chabiroael.twinbook.capture.CaptureStore
 import io.github.chabiroael.twinbook.engine.bridge.BridgeEvent
+import io.github.chabiroael.twinbook.engine.capture.CaptureRecorder
 import io.github.chabiroael.twinbook.engine.bridge.BridgeState
 import io.github.chabiroael.twinbook.mockserver.MockServer
+import android.os.ParcelFileDescriptor
+import java.io.File
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
@@ -52,6 +56,32 @@ object TestEngine {
 
     suspend fun ready(): ReadyInfo = engine.awaitReady(90_000)
 
+    /** Capture recorder writing to this test app's private storage (captures-test/). */
+    val recorder: CaptureRecorder by lazy {
+        val store = CaptureStore(File(instrumentation.targetContext.filesDir, "captures-test"))
+        onMain { CaptureRecorder(engine, store, mapOf("app" to "engine-test")) }
+    }
+
+    fun shell(command: String): String {
+        val pfd = instrumentation.uiAutomation.executeShellCommand(command)
+        return ParcelFileDescriptor.AutoCloseInputStream(pfd).use { it.readBytes().toString(Charsets.UTF_8) }
+    }
+
+    /** Total PSS in KiB over every process of this package (dumpsys meminfo per process). */
+    fun totalPssKiB(): Long {
+        val pkg = instrumentation.targetContext.packageName
+        val pids = shell("ps -A -o PID,NAME").lines().drop(1).mapNotNull { line ->
+            val parts = line.trim().split(Regex("\\s+"))
+            if (parts.size >= 2 && parts[1].startsWith(pkg)) parts[0] else null
+        }
+        return pids.sumOf { pid ->
+            val out = shell("dumpsys meminfo $pid")
+            Regex("TOTAL PSS:\\s+(\\d+)").find(out)?.groupValues?.get(1)?.toLong()
+                ?: Regex("(?m)^\\s*TOTAL\\s+(\\d+)").find(out)?.groupValues?.get(1)?.toLong()
+                ?: 0L
+        }
+    }
+
     fun <T> onMain(block: () -> T): T {
         var result: Result<T>? = null
         instrumentation.runOnMainSync { result = runCatching(block) }
@@ -84,8 +114,9 @@ object TestEngine {
     fun eventsNamed(name: String, predicate: (JSONObject) -> Boolean): List<BridgeEvent> =
         synchronized(allEvents) { allEvents.filter { it.name == name && predicate(it.data) } }
 
-    fun sha256(text: String): String =
-        MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    fun sha256(text: String): String = sha256(text.toByteArray(Charsets.UTF_8))
+
+    fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     /**
      * Writes an evidence line to logcat with tag twinbook-evidence. Scripts in tools/ and the

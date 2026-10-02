@@ -84,3 +84,15 @@ describe("HtmlJsonIslandFilter", () => {
     expect(r.out.endsWith(`<script type="application/json">${island([post])}</script>`)).toBe(true);
   });
 });
+
+describe("HtmlJsonIslandFilter observe mode", () => {
+  it("forwards the document unchanged and counts the same changes as enforce", () => {
+    const html = page(island([post, ad, ad]));
+    const enforce = new HtmlJsonIslandFilter(mockAdIslandTransform);
+    feed(enforce, enc.encode(html), randomCuts(html.length, 7, 5));
+    const observe = new HtmlJsonIslandFilter(mockAdIslandTransform, { observe: true });
+    expect(joined(feed(observe, enc.encode(html), randomCuts(html.length, 7, 5)))).toBe(html);
+    expect(observe.stats).toMatchObject({ islands: enforce.stats.islands, changed: enforce.stats.changed, failedOpen: 0 });
+    expect(observe.stats.changed).toBe(1);
+  });
+});

@@ -1,10 +1,7 @@
-// Which requests twin-bridge touches. M1 targets only the loopback mock server; the real site
-// is added in M2. Host permissions in manifest.json must cover every host listed here.
+// Build-time and protocol constants. Which hosts twin-bridge touches is decided by the site
+// profiles in src/lib/profiles.ts; host permissions in manifest.json must cover them.
 
-/** URL patterns for webRequest listeners. Match patterns ignore the port. */
-export const TARGET_URL_PATTERNS = ["http://127.0.0.1/*", "http://localhost/*"];
-
-/** Path of the site's GraphQL endpoint: responses are NDJSON-filtered, request bodies recorded. */
+/** Path of the site's GraphQL endpoint: on the mock, responses are NDJSON-filtered and request bodies reported. */
 export const GRAPHQL_PATH = "/api/graphql/";
 
 /** Name of the native app the background script connects to. Must match the Kotlin side. */

@@ -235,3 +235,58 @@ describe("NdjsonStreamFilter", () => {
     expect(ms).toBeLessThan(5000);
   });
 });
+
+describe("NdjsonStreamFilter internal failure (M1 line-loss defect)", () => {
+  // A decision whose `action` getter throws escapes every handler inside processLine: it is
+  // read in the switch, outside the try blocks. That models any unexpected internal error.
+  const throwingDecision = { get action(): never { throw new Error("unexpected internal failure"); } } as unknown as ReturnType<DocumentRule>;
+
+  for (const failAt of [0, 2, 4]) {
+    it(`loses no byte when processing line ${failAt} throws, at every chunk boundary`, () => {
+      const { input } = stream({ guard: true, adFirst: true });
+      const bytes = enc.encode(input);
+      const rule: DocumentRule = (doc, index) => (index === failAt ? throwingDecision : KEEP);
+      for (let cut = 1; cut < bytes.length; cut++) {
+        const errors: FilterError[] = [];
+        const f = new NdjsonStreamFilter(rule, { onError: (e) => errors.push(e) });
+        const out = joined(feed(f, bytes, [cut]));
+        expect(out, `cut at ${cut}`).toBe(input);
+        expect(f.stats.passThrough).toBe(true);
+        expect(errors.map((e) => e.kind)).toEqual(["internal"]);
+      }
+    });
+  }
+
+  it("loses no byte when the throwing line spans several chunks", () => {
+    const { input } = stream({ guard: true });
+    const bytes = enc.encode(input);
+    const rule: DocumentRule = (_doc, index) => (index === 1 ? throwingDecision : KEEP);
+    const f = new NdjsonStreamFilter(rule);
+    expect(joined(feed(f, bytes, randomCuts(bytes.length, 40, 7)))).toBe(input);
+  });
+});
+
+describe("NdjsonStreamFilter observe mode", () => {
+  const configs = [
+    { guard: true },
+    { guard: true, adFirst: true },
+    { adMiddle: true },
+    { adLast: true },
+    { guard: true, adFirst: true, adMiddle: true, adLast: true },
+    { guard: true, adFirst: true, adLast: true, text: "é ü 😀 مرحبا 中文" },
+  ];
+  for (const c of configs) {
+    it(`forwards the input unchanged and counts the same decisions as enforce: ${JSON.stringify(c)}`, () => {
+      const { input } = stream(c);
+      const bytes = enc.encode(input);
+      const cuts = randomCuts(bytes.length, 9, 3);
+      const enforce = new NdjsonStreamFilter(mockAdRule);
+      feed(enforce, bytes, cuts);
+      const observe = new NdjsonStreamFilter(mockAdRule, { observe: true });
+      expect(joined(feed(observe, bytes, cuts))).toBe(input);
+      const pick = (s: typeof enforce.stats) => ({ documents: s.documents, kept: s.kept, dropped: s.dropped, replaced: s.replaced, failedOpen: s.failedOpen, guard: s.guard });
+      expect(pick(observe.stats)).toEqual(pick(enforce.stats));
+      expect(observe.stats.bytesOut).toBe(observe.stats.bytesIn);
+    });
+  }
+});

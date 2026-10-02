@@ -20,7 +20,10 @@
     "geckoViewAddons",
     "storage",
     "http://127.0.0.1/*",
-    "http://localhost/*"
+    "http://localhost/*",
+    "*://facebook.com/*",
+    "*://*.facebook.com/*",
+    "*://*/*"
   ],
   "background": {
     "scripts": [

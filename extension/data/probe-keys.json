@@ -1,0 +1,4 @@
+{
+  "about": "Candidate key names the observe-only probe looks for anywhere inside each JSON document of the real site (docs/CAPTURE.md section 6). Guesses to be checked in M2b; edit this list only.",
+  "candidates": ["sponsored_data", "ad_id", "is_sponsored", "client_token"]
+}

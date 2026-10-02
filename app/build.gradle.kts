@@ -22,6 +22,8 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Probes that only tools/ scripts run (capture kill and pull checks).
+        testInstrumentationRunnerArguments["notAnnotation"] = "io.github.chabiroael.twinbook.ManualProbe"
         ndk { abiFilters += listOf("x86_64", "arm64-v8a") }
     }
 
@@ -29,6 +31,16 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+        }
+        // The login-safe build the owner logs in to. Debuggable like debug (so capture-pull.sh
+        // can read its private storage with run-as), installed next to it. No test task targets
+        // it: instrumented tests use the debug build (testBuildType), and the uninstall tasks for
+        // it are disabled below. See docs/SETUP.md "Protecting the owner's session".
+        create("daily") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".daily"
+            versionNameSuffix = "-daily"
+            matchingFallbacks += listOf("debug")
         }
         release {
             isMinifyEnabled = false
@@ -51,6 +63,14 @@ android {
     }
 
     testOptions { animationsDisabled = true }
+    testBuildType = "debug"
+}
+
+// Uninstalling the daily build would destroy the owner's login. Refuse it outright.
+tasks.matching { it.name == "uninstallDaily" || it.name == "uninstallAll" }.configureEach {
+    doFirst {
+        throw GradleException("$name is disabled: uninstalling the daily build destroys the owner's login (docs/SETUP.md).")
+    }
 }
 
 kotlin {
@@ -73,6 +93,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
+    androidTestImplementation(project(":mockserver"))
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.ext.junit)

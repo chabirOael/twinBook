@@ -1,0 +1,203 @@
+{
+  "about": "Shared layer 2 (taint) test vectors. Run by extension/test/taint.test.ts and capture/src/test/.../TaintScrubberTest.kt. Inputs and outputs are UTF-8 text; scrubbing works on its bytes. See docs/CAPTURE.md section 5.",
+  "minTaintLength": 8,
+  "stopList": [
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "deleted"
+  ],
+  "cases": [
+    {
+      "name": "plain value in JSON and text",
+      "secrets": [
+        {
+          "value": "AbCdEf123456",
+          "label": "cookie:xs"
+        }
+      ],
+      "input": "{\"a\":\"AbCdEf123456\",\"b\":\"x AbCdEf123456 y\"}",
+      "output": "{\"a\":\"!T:cookie:xs!\",\"b\":\"x !T:cookie:xs! y\"}",
+      "counts": {
+        "cookie:xs": 2
+      }
+    },
+    {
+      "name": "URL-encoded, form-encoded and JSON slash-escaped variants",
+      "secrets": [
+        {
+          "value": "tok:en/val+ue=1 z",
+          "label": "field:fb_dtsg"
+        }
+      ],
+      "input": "fb_dtsg=tok%3Aen%2Fval%2Bue%3D1%20z&q=tok%3Aen%2Fval%2Bue%3D1+z; \"v\":\"tok:en\\/val+ue=1 z\" raw tok:en/val+ue=1 z",
+      "output": "fb_dtsg=!T:field:fb_dtsg!&q=!T:field:fb_dtsg!; \"v\":\"!T:field:fb_dtsg!\" raw !T:field:fb_dtsg!",
+      "counts": {
+        "field:fb_dtsg": 4
+      }
+    },
+    {
+      "name": "value shorter than minTaintLength is not scrubbed",
+      "secrets": [
+        {
+          "value": "1234567",
+          "label": "field:jazoest"
+        }
+      ],
+      "input": "jazoest=1234567 and 1234567",
+      "output": "jazoest=1234567 and 1234567",
+      "counts": {}
+    },
+    {
+      "name": "stop-list value is not scrubbed",
+      "secrets": [
+        {
+          "value": "Undefined",
+          "label": "cookie:x"
+        }
+      ],
+      "input": "undefined Undefined",
+      "output": "undefined Undefined",
+      "counts": {}
+    },
+    {
+      "name": "one repeated character is not scrubbed",
+      "secrets": [
+        {
+          "value": "aaaaaaaaaa",
+          "label": "cookie:y"
+        }
+      ],
+      "input": "aaaaaaaaaaaa",
+      "output": "aaaaaaaaaaaa",
+      "counts": {}
+    },
+    {
+      "name": "layer 1 placeholder is not a secret",
+      "secrets": [
+        {
+          "value": "!R******!",
+          "label": "cookie:z"
+        }
+      ],
+      "input": "c=!R******!",
+      "output": "c=!R******!",
+      "counts": {}
+    },
+    {
+      "name": "leftmost-longest match wins",
+      "secrets": [
+        {
+          "value": "ABCDEFGH12",
+          "label": "cookie:short"
+        },
+        {
+          "value": "ABCDEFGH1234",
+          "label": "cookie:long"
+        }
+      ],
+      "input": "xxABCDEFGH1234yy ABCDEFGH12zz",
+      "output": "xx!T:cookie:long!yy !T:cookie:short!zz",
+      "counts": {
+        "cookie:long": 1,
+        "cookie:short": 1
+      }
+    },
+    {
+      "name": "shared variant keeps the first label",
+      "secrets": [
+        {
+          "value": "SameValue99",
+          "label": "cookie:first"
+        },
+        {
+          "value": "SameValue99",
+          "label": "field:second"
+        }
+      ],
+      "input": "[SameValue99]",
+      "output": "[!T:cookie:first!]",
+      "counts": {
+        "cookie:first": 1
+      }
+    },
+    {
+      "name": "non-ASCII value, raw and URL-encoded",
+      "secrets": [
+        {
+          "value": "pässwörd-é😀",
+          "label": "field:pass"
+        }
+      ],
+      "input": "a pässwörd-é😀 b p%C3%A4ssw%C3%B6rd-%C3%A9%F0%9F%98%80 c",
+      "output": "a !T:field:pass! b !T:field:pass! c",
+      "counts": {
+        "field:pass": 2
+      }
+    },
+    {
+      "name": "JSON-escaped twice",
+      "secrets": [
+        {
+          "value": "a\"b\\c-12345",
+          "label": "field:token"
+        }
+      ],
+      "input": "{\"x\":\"{\\\"t\\\":\\\"a\\\\\\\"b\\\\\\\\c-12345\\\"}\",\"y\":\"a\\\"b\\\\c-12345\"}",
+      "output": "{\"x\":\"{\\\"t\\\":\\\"!T:field:token!\\\"}\",\"y\":\"!T:field:token!\"}",
+      "counts": {
+        "field:token": 2
+      }
+    },
+    {
+      "name": "HTML-escaped",
+      "secrets": [
+        {
+          "value": "a&b<c>\"d'e12",
+          "label": "field:lsd"
+        }
+      ],
+      "input": "<input value=\"a&amp;b&lt;c&gt;&quot;d&#39;e12\">",
+      "output": "<input value=\"!T:field:lsd!\">",
+      "counts": {
+        "field:lsd": 1
+      }
+    },
+    {
+      "name": "label characters are sanitized",
+      "secrets": [
+        {
+          "value": "Weird-Label-Value-1",
+          "label": "cookie:we ird/name"
+        }
+      ],
+      "input": "Weird-Label-Value-1",
+      "output": "!T:cookie:we_ird_name!",
+      "counts": {
+        "cookie:we_ird_name": 1
+      }
+    },
+    {
+      "name": "control character escaped in JSON",
+      "secrets": [
+        {
+          "value": "line1\nline2xx",
+          "label": "field:token"
+        }
+      ],
+      "input": "{\"t\":\"line1\\nline2xx\"}",
+      "output": "{\"t\":\"!T:field:token!\"}",
+      "counts": {
+        "field:token": 1
+      }
+    },
+    {
+      "name": "no secrets leaves data unchanged",
+      "secrets": [],
+      "input": "nothing to do 😀",
+      "output": "nothing to do 😀",
+      "counts": {}
+    }
+  ]
+}

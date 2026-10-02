@@ -11,6 +11,8 @@
 // - Blank lines are forwarded unchanged and are not documents.
 // - An optional `for (;;);` guard before the first document is preserved in the output, also
 //   when the first document is replaced or dropped.
+// - Observe mode: the rule runs and its decisions are counted, but every line is forwarded
+//   byte for byte and nothing is re-serialized.
 // - Fail open: a line that is not valid UTF-8 or not valid JSON, or for which the rule throws,
 //   is forwarded unchanged and reported through onError. The rest of the stream is still
 //   filtered. An unexpected internal error switches the filter to pass-through for the rest
@@ -31,7 +33,12 @@ export const DROP: Decision = Object.freeze({ action: "drop" });
  * first document of the response has index 0. The rule may mutate `doc` and return it in a
  * replace decision.
  */
-export type DocumentRule = (doc: unknown, index: number) => Decision;
+export type DocumentRule = (doc: unknown, index: number, info?: DocumentInfo) => Decision;
+
+export interface DocumentInfo {
+  /** Size of the document's line in bytes, without its line terminator. */
+  readonly bytes: number;
+}
 
 export interface FilterError {
   readonly kind: "utf8" | "parse" | "rule" | "internal";
@@ -58,6 +65,8 @@ export interface NdjsonFilterStats {
 
 export interface NdjsonFilterOptions {
   onError?: (error: FilterError) => void;
+  /** Count the rule's decisions but forward every line unchanged. */
+  observe?: boolean;
 }
 
 const NEWLINE = 0x0a;
@@ -69,6 +78,7 @@ const BOM_PREFIX = /^\uFEFF/;
 export class NdjsonStreamFilter {
   private readonly rule: DocumentRule;
   private readonly onError: ((error: FilterError) => void) | undefined;
+  readonly observe: boolean;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   private readonly encoder = new TextEncoder();
   private pending: Uint8Array[] = [];
@@ -89,6 +99,7 @@ export class NdjsonStreamFilter {
   constructor(rule: DocumentRule, options: NdjsonFilterOptions = {}) {
     this.rule = rule;
     this.onError = options.onError;
+    this.observe = options.observe === true;
   }
 
   /** Feeds one chunk and returns the bytes that can be emitted now (possibly empty). */
@@ -104,9 +115,12 @@ export class NdjsonStreamFilter {
         if (nl < 0) break;
         const piece = chunk.subarray(start, nl + 1);
         const line = this.pending.length === 0 ? piece : concatBytes([...this.pending, piece]);
+        // The line's bytes leave `pending` and `start` only once it has been processed, so a
+        // throw below still finds them there and the catch emits them unchanged.
+        const processed = this.processLine(line);
         this.pending = [];
         start = nl + 1;
-        out.push(this.processLine(line));
+        out.push(processed);
       }
       if (start < chunk.length) this.pending.push(chunk.slice(start));
       return this.count(concatBytes(out));
@@ -184,7 +198,7 @@ export class NdjsonStreamFilter {
 
     let decision: Decision;
     try {
-      decision = this.rule(doc, index);
+      decision = this.rule(doc, index, { bytes: body.length });
     } catch (e) {
       return this.failOpen(line, { kind: "rule", index, message: errorMessage(e), sample: sampleOf(body) });
     }
@@ -196,9 +210,14 @@ export class NdjsonStreamFilter {
         return line;
       case "drop":
         this.stats.dropped++;
+        if (this.observe) return line;
         // Keep the guard in front of whatever document comes next.
         return guard !== null ? prefixBytes.slice() : EMPTY;
       case "replace": {
+        if (this.observe) {
+          this.stats.replaced++;
+          return line;
+        }
         let json: string | undefined;
         try {
           json = JSON.stringify(decision.value);

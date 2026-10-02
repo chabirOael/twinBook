@@ -1,9 +1,11 @@
-// twin-bridge background script: bridge to the app, stream filters, request recorder,
-// replay executor. Nothing here touches a page's JavaScript realm.
+// twin-bridge background script: bridge to the app, stream filters, capture recorder, M1
+// request reporter, replay executor. Nothing here touches a page's JavaScript realm.
 
+import { installCapture } from "./capture";
 import { BUILD_MARKER, NATIVE_APP } from "./config";
-import { installFilters, type FilterSwitch } from "./filters";
-import { BridgeClient, type PortLike } from "./lib/bridge";
+import { Filters } from "./filters";
+import { BridgeClient, BridgeRequestError, type PortLike } from "./lib/bridge";
+import { FilterModes, ModeError, MOCK_PROFILE, PROFILES, profileByName, type FilterMode } from "./lib/profiles";
 import { installRecorder } from "./recorder";
 import { installReplay } from "./replay";
 
@@ -28,17 +30,47 @@ bridge.request("engine.info").then(
   (e: unknown) => Object.assign(early, { error: String(e), done: true }),
 );
 
-const filterSwitch: FilterSwitch = { enabled: true };
-installFilters(bridge, filterSwitch);
+const modes = new FilterModes();
+const filters = new Filters(bridge, modes);
+filters.install();
+installCapture(bridge, { siteListening: (on) => filters.setSiteListening(on), extensionStartedAt: startedAt });
 installRecorder(bridge);
 installReplay(bridge);
 
 bridge.handle("extension.info", () => ({ ...extensionInfo(), permissions: manifest.permissions ?? [] }));
 
+// M1 switch, kept for the measurements: the mock profile in enforce (on) or off.
 bridge.handle("filter.setEnabled", (params) => {
-  filterSwitch.enabled = params["enabled"] !== false;
-  return { enabled: filterSwitch.enabled };
+  const enabled = params["enabled"] !== false;
+  modes.set(MOCK_PROFILE, enabled ? "enforce" : "off");
+  return { enabled };
 });
+
+bridge.handle("filter.setMode", (params) => {
+  const profile = profileByName(String(params["profile"] ?? ""));
+  if (profile === undefined) throw new BridgeRequestError("bad_request", `unknown profile ${String(params["profile"])}`);
+  try {
+    modes.set(profile, String(params["mode"]) as FilterMode);
+  } catch (e) {
+    if (e instanceof ModeError) throw new BridgeRequestError(e.code, e.message);
+    throw e;
+  }
+  return { profile: profile.name, mode: modes.get(profile) };
+});
+
+bridge.handle("filter.describe", () => ({
+  modes: modes.snapshot(),
+  siteListening: filters.siteListening,
+  profiles: PROFILES.map((p) => ({
+    name: p.name,
+    urlPatterns: p.urlPatterns,
+    allowedModes: p.allowedModes,
+    defaultMode: p.defaultMode,
+    replay: p.replay,
+    rewriteHeaders: p.rewriteHeaders,
+    rule: p.rule,
+  })),
+}));
 
 bridge.handle("storage.get", async (params) => {
   const keys = Array.isArray(params["keys"]) ? (params["keys"] as string[]) : null;
