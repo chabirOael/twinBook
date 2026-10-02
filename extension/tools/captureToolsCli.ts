@@ -6,10 +6,15 @@
 //   findings <session dir>... [--rules f]  the numbers of docs/findings/payloads.md
 //   keypaths <key> <session dir>...        where a key occurs in the feed edges (exploration)
 //   fixtures <session dir>... [--census]   sanitized fixtures into fixtures/ (fixtures/README.md)
+//   leakscan <file>... --raw <session dir>[,<session dir>...]
+//                                          raw non-structural values, identifier tokens, e-mails,
+//                                          phone numbers in text files (names and counts only)
 import { join } from "node:path";
 import { findingsReport, keyPathsReport } from "./findings/report";
 import { buildFixtureManifest } from "./fixtures/manifest";
 import { buildFixtures, readAllowlist, writeFixtures } from "./fixtures/sanitize";
+import { rawValues, tokensOf } from "./fixtures/leak";
+import { readFileSync } from "node:fs";
 import { ancestorScan, formatScan, scanSession } from "./opaqueScan";
 import { Session } from "./findings/session";
 import { rescrubSession } from "./rescrub";
@@ -18,7 +23,8 @@ const [cmd, ...rest] = process.argv.slice(2);
 const flags = new Set(rest.filter((a) => a.startsWith("--")));
 const rulesAt = rest.indexOf("--rules");
 const rulesFile = rulesAt >= 0 ? rest[rulesAt + 1]! : join(process.env["TWINBOOK_ROOT"] ?? "..", "rules", "ads-v1.json");
-const paths = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && rest[i - 1] === "--rules"));
+const paths = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && (rest[i - 1] === "--rules" || rest[i - 1] === "--raw")));
+const rawAt = rest.indexOf("--raw");
 
 /** Every parsed response document of a session: NDJSON and guarded bodies, document islands. */
 function allDocuments(dir: string): unknown[] {
@@ -82,6 +88,33 @@ switch (cmd) {
     process.stdout.write(
       `fixtures: ${set.files.size} files, ${set.entries.reduce((a, e) => a + e.bytes, 0)} bytes; strings ${st.strings} (kept ${st.kept}, replaced ${st.replaced}, URLs ${st.urls}), numbers remapped ${st.numbersRemapped}, keys replaced ${st.keysReplaced}, enum candidates ${st.enumCandidates.size}\n`,
     );
+    break;
+  }
+  case "leakscan": {
+    if (paths.length === 0 || rawAt < 0) usage();
+    const raw = rawValues(rest[rawAt + 1]!.split(","), join(process.env["TWINBOOK_ROOT"] ?? "..", "fixtures"));
+    const long = [...raw.strings].filter((x) => x.length >= 8);
+    let total = 0;
+    for (const f of paths) {
+      const text = readFileSync(f, "utf8");
+      const hits = long.filter((x) => text.includes(x)).length;
+      const tokens = new Set(text.split(/[^A-Za-z0-9]+/).filter(Boolean));
+      const tokenHits = [...tokens].filter((t) => raw.tokens.has(t) || (/^\d{6,}$/.test(t) && raw.numbers.has(t))).length;
+      const emails = (text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g) ?? []).length;
+      const phones = (text.match(/\+\d{1,3}[\s.-]?\(?\d{1,4}\)?(?:[\s.-]\d{2,4}){2,4}/g) ?? []).length;
+      total += hits + tokenHits + emails + phones;
+      if (hits + tokenHits + emails + phones > 0) process.stdout.write(`  ${f}: raw strings ${hits}, raw tokens ${tokenHits}, e-mails ${emails}, phones ${phones}\n`);
+      if (flags.has("--show")) {
+        // Matched values are shown only when they cannot be personal (no space next to a
+        // capital letter, no run of 5+ digits); otherwise only their shape.
+        const show = (x: string): string => (/ [A-Z]|[A-Z][a-z]+ [A-Z]/.test(x) || /\d{5,}/.test(x) ? `<shape ${x.replace(/[a-z]/g, "a").replace(/[A-Z]/g, "A").replace(/\d/g, "9").replace(/(.)\1+/g, "$1+")}>` : x);
+        for (const x of long.filter((v) => text.includes(v))) process.stdout.write(`      string: ${show(x)}\n`);
+        for (const t of [...tokens].filter((t) => raw.tokens.has(t) || (/^\d{6,}$/.test(t) && raw.numbers.has(t)))) process.stdout.write(`      token: ${show(t)}\n`);
+        for (const m of text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g) ?? []) process.stdout.write(`      e-mail: ${m.replace(/^[^@]+/, "<local>")}\n`);
+      }
+      void tokensOf;
+    }
+    process.stdout.write(`leakscan: ${paths.length} files against ${long.length} raw strings of 8+ characters, ${raw.tokens.size} identifier tokens, ${raw.numbers.size} remapped numbers: ${total} findings\n`);
     break;
   }
   case "keypaths": {
