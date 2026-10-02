@@ -58,7 +58,10 @@ Runs, failing on the first error:
    TypeScript typecheck, Vitest tests (stream filters and observe mode, bridge client,
    capture transport, layer 1 redaction, the taint vectors, the probe, the observe-only
    guarantees of the real-site profile against a fake WebExtension API, the HAR importer,
-   version stamp), esbuild bundle into `extension/dist/`, and the lint policy
+   version stamp, the offline re-scrub and scan, ad rules v1, and the fixture tests of
+   `fixtures/`: observe mode over every fixture, rules v1 in enforce mode, pattern scans, and
+   the leak test, which runs only when the raw recordings are in `captures/` and is reported as
+   skipped otherwise), esbuild bundle into `extension/dist/`, and the lint policy
    (`node lint.mjs`): `web-ext lint` errors fail; warnings fail unless listed with a reason
    in `extension/lint-allowlist.json` (today only `geckoViewAddons`).
 2. `./gradlew check assembleDebug`: JVM tests in `:data`, `:mockserver` and `:capture` (store,
@@ -130,12 +133,17 @@ tools/capture-pull.sh [--debug] pull-all
 node tools/capture-summary.mjs [--short] captures/<id>   # hosts, types, leads, redaction report
 tools/har-import.sh <file.har> [--id <id>] [--out <dir>] # HAR from desktop Firefox -> captures/<id>
 tools/app-instrument.sh <Class[#method]> [-e k v]        # one :app test via am instrument, debug app, data kept
+tools/capture-tools.sh rescrub captures/<id> [--replace]   # layer 1 + 2 again with the current rules -> captures/<id>-rescrub
+tools/capture-tools.sh scan captures/<id>-rescrub          # opaque-value and credential-key scan (names, lengths, counts)
+tools/capture-tools.sh findings captures/<id>-rescrub ...  # every number of docs/findings/payloads.md
+tools/capture-tools.sh fixtures captures/<id>-rescrub ...  # sanitized fixtures into fixtures/ (fixtures/README.md)
 tools/capture-kill-test.sh              # C7: a killed capture cannot be pulled and is deleted at start
 tools/daily-survival-test.sh            # C13: daily data survives tests, M1 scripts and an update
 ```
 
 `captures/` is git-ignored. The format is in docs/CAPTURE.md, the owner's steps in
-docs/CAPTURE-CHECKLIST.md. `capture-pull.sh` and `app-instrument.sh` never delete anything on
+docs/CAPTURE-CHECKLIST.md. The device scripts work with a real phone too: set `ANDROID_SERIAL` to
+the serial `adb devices` lists (USB or wireless debugging). `capture-pull.sh` and `app-instrument.sh` never delete anything on
 the device. `CaptureProbe` (app) is a `@ManualProbe`: only the scripts run it.
 
 ### Visible emulator window (manual use, WSLg)

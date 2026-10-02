@@ -66,7 +66,11 @@ as service-worker fetches), `frameId`, `parentFrameId`, `frameAncestors`, `docum
 `body.kind`:
 
 - `formData`: `fields`, the parsed form fields in order as `[name, value]` pairs, duplicates
-  kept, layer 1 applied. This is what form posts and the site's async POSTs produce.
+  kept, layer 1 applied. This is what form posts and the site's async POSTs produce. A body
+  part without `=` (Gecko's parser gives it no value) is recorded as `[name, null]`; before
+  M2b it made layer 1 throw and the whole request line was lost (two `/ajax/route-definition/`
+  posts in the owner's first desktop capture). If computing a line's headers or body ever
+  throws again, the line is still written, with `extraError` instead of the failed part.
 - `raw`: `text` of a non-form body (JSON, text) up to 256 KiB, layer 1 applied; `bytes` total
   size; `truncated`.
 - `binary`: `bytes` only. `error`, `none`.
@@ -150,13 +154,17 @@ Rules in `extension/data/redaction-rules.json`, one `why` per entry.
   (`"token":"..."`, `\"token\":\"...\"`), in JavaScript literals (`token:'...'`), in
   `key=value` pairs, and in `<input name="key" value="...">` tags.
 
-Secret keys (case-insensitive, exact names): `fb_dtsg`, `fb_dtsg_ag`, `async_get_token`, `lsd`,
-`jazoest`, `__a` (see the rules file: usually `1`, but a long opaque value on one logged-out
-beacon), `token`, `access_token`, `refresh_token`, `id_token`, `oauth_token`, `auth_token`,
-`session_key`, `sessionKey`, `session_token`, `csrf_token`, `csrftoken`, `xsrf_token`, `nonce`,
-`machine_id`, `pass`, `password`, `encpass`, `email`, `contact_point`, `contactpoint`,
-`approvals_code`, `otp`. Shape-only fields stay: `__rev`, `__req`, `__s`, `__hsi`, `__dyn`,
-`__csr`, `__user`, `__spin_*`, `av`, `doc_id`, `variables` (its inner keys are scanned).
+Secret keys (case-insensitive, exact names; 76 since rules version 5): `fb_dtsg`, `fb_dtsg_ag`,
+`async_get_token`, `lsd`, `jazoest`, `__a`, `token`, the OAuth and session token names in
+snake and camel case (`access_token`, `accessToken`, `sessionToken` …), `csrf`, `xsrf`, `dtsg`,
+`nonce`, `ServerNonce`, `machine_id`, device ids (`device_id`, `deviceId`, `x-dgw-deviceid` …),
+logout and link-shim hashes, the messaging client's `accountKey`, `userKeyBase`,
+`encrypted_serialized_cat`, `encrypted`, `secret`, the string values of `data` (anonymous
+credentials of the messaging worker), and the login fields (`pass`, `password`, `encpass`,
+`email`, `contact_point`, `approvals_code`, `otp`). The list and the reason for each key are in
+the rules file; docs/findings/payloads.md (appendix) explains the additions of M2b. Shape-only
+fields stay: `__rev`, `__req`, `__s`, `__hsi`, `__dyn`, `__csr`, `__user`, `__spin_*`, `av`,
+`doc_id`, `variables` (its inner keys are scanned).
 
 Placeholder: a value of n characters becomes `!R` + `*` × (n − 3) + `!` (n ≥ 3), or `*` × n
 (n < 3). The length is kept, so sizes and offsets stay meaningful. The characters are left
@@ -195,6 +203,26 @@ Known over-redaction: any non-secret cookie value of 8 characters or more (for e
 window size like `1280x720`) is scrubbed wherever it appears. Placeholders name their label,
 so M2b can tell.
 
+### Known defect: secrets that are JSON numbers
+
+Layer 2 replaces bytes. The site sends the viewer's id (the `c_user` cookie value) also as a
+bare JSON number (`"userID":<digits>`, array elements). There the placeholder
+`!T:cookie:c_user!` stands unquoted, which is not valid JSON: 364 places in session
+`20261002-172927-site`, 401 in `20261002-183314-site`. The offline tools turn such a
+placeholder into `0` before parsing (`repairBare` in `extension/tools/findings/session.ts`).
+A fix for the finalize pass would write a numeric placeholder where the match stands in a
+number position.
+
+### Re-scrubbing a pulled session with newer rules
+
+`tools/capture-tools.sh rescrub captures/<id>` re-applies layer 1 with the current rules to every
+line and body of a pulled session, then layer 2 with every value found, verifies, and writes a
+new finalized session `captures/<id>-rescrub` (with a `rescrub` section in session.json: source
+id, rules version and hash, layer 1 and 2 counts, labels). The original is only read.
+`--replace` rebuilds an existing copy. `tools/capture-tools.sh scan` lists keys whose values are
+long, opaque and recur, credential-like key names, and long unredacted strings below
+credential-like keys, with names, lengths and counts only.
+
 ## 6. Filter modes and the probe
 
 Each profile has a filter mode (`filter.setMode`): `enforce` (the M1 behaviour: the core's
@@ -210,6 +238,14 @@ inside, with counts. The names are in `extension/data/probe-keys.json`: `sponsor
 `ad_id`, `is_sponsored`, `client_token`. At most 400 reports per response are kept
 (`probe.documents` counts all). The `observe` line also carries the core's `stats`
 (`bytesIn`, `bytesOut` equal in observe mode, `documents`, `kept`, `failedOpen` ...).
+
+### Long-lived connections
+
+WebSocket handshakes are recorded like any request (`d.type` `websocket`, `request`,
+`sendHeaders`, `headers`, `completed`); their frames are not visible to webRequest and are never
+recorded. Over HTTP/2 the handshake reports status 200, over HTTP/1.1 status 101. Service-worker
+scripts are recorded as `script` requests without a tab. `tools/capture-summary.mjs` lists both
+under "Long-lived connections".
 
 ## 7. Transport and limits
 
