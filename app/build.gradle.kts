@@ -62,6 +62,10 @@ android {
         jniLibs { useLegacyPackaging = true }
     }
 
+    // AGP's default ignore pattern drops asset directories whose name starts with "_" (<dir>_*).
+    // uBlock Origin keeps its translations in _locales/, without which Gecko rejects it as invalid.
+    androidResources { ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~" }
+
     testOptions { animationsDisabled = true }
     testBuildType = "debug"
 }
