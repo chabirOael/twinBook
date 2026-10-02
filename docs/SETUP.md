@@ -55,12 +55,15 @@ tools/check.sh
 Runs, failing on the first error:
 
 1. In `extension/`: `npm ci` if `node_modules` is missing or stale, then `npm run check`:
-   TypeScript typecheck, Vitest tests (stream filters, bridge client, recorder parsing,
+   TypeScript typecheck, Vitest tests (stream filters and observe mode, bridge client,
+   capture transport, layer 1 redaction, the taint vectors, the probe, the observe-only
+   guarantees of the real-site profile against a fake WebExtension API, the HAR importer,
    version stamp), esbuild bundle into `extension/dist/`, and the lint policy
    (`node lint.mjs`): `web-ext lint` errors fail; warnings fail unless listed with a reason
    in `extension/lint-allowlist.json` (today only `geckoViewAddons`).
-2. `./gradlew check assembleDebug`: JVM tests in `:data` and `:mockserver`, Android lint in
-   all four modules, and the debug APK (`app/build/outputs/apk/debug/app-debug.apk`,
+2. `./gradlew check assembleDebug`: JVM tests in `:data`, `:mockserver` and `:capture` (store,
+   finalize pass, the same taint vectors as the extension), Android lint in all five modules,
+   and the debug APK (`app/build/outputs/apk/debug/app-debug.apk`,
    about 198 MB because GeckoView's native libraries for x86_64 and arm64-v8a are inside).
 
 Extra arguments go to Gradle, for example `tools/check.sh --rerun-tasks`.
@@ -105,6 +108,36 @@ annotation and are excluded from Gradle connected runs; only these scripts run t
 - Debug builds have the application ID `io.github.chabiroael.twinbook.debug`; main
   activity `io.github.chabiroael.twinbook.MainActivity`.
 
+### Build types: debug and daily
+
+| Build | Application ID | Used by |
+|---|---|---|
+| `debug` | `io.github.chabiroael.twinbook.debug` | every test and agent script (`connectedDebugAndroidTest` installs and uninstalls it) |
+| `daily` | `io.github.chabiroael.twinbook.daily` | the owner's logged-in session only; installed next to debug, label "twinBook daily" |
+
+`daily` is a debug build with its own ID suffix (debuggable, debug-signed, so `run-as` can read
+its captures). No test task targets it (`testBuildType = "debug"`), and the Gradle tasks
+`uninstallDaily` and `uninstallAll` fail on purpose. Read section 7 before touching it.
+
+### Capture tooling (M2a)
+
+```bash
+tools/daily-install.sh [--no-build]     # build and install or update the daily app, data kept
+tools/daily-launch.sh                   # launch the daily app
+tools/capture-pull.sh [--debug] list    # sessions in the daily (or debug) app, finalized or not
+tools/capture-pull.sh [--debug] pull <id>   # copy a finalized session to captures/<id>, verify checksums
+tools/capture-pull.sh [--debug] pull-all
+node tools/capture-summary.mjs [--short] captures/<id>   # hosts, types, leads, redaction report
+tools/har-import.sh <file.har> [--id <id>] [--out <dir>] # HAR from desktop Firefox -> captures/<id>
+tools/app-instrument.sh <Class[#method]> [-e k v]        # one :app test via am instrument, debug app, data kept
+tools/capture-kill-test.sh              # C7: a killed capture cannot be pulled and is deleted at start
+tools/daily-survival-test.sh            # C13: daily data survives tests, M1 scripts and an update
+```
+
+`captures/` is git-ignored. The format is in docs/CAPTURE.md, the owner's steps in
+docs/CAPTURE-CHECKLIST.md. `capture-pull.sh` and `app-instrument.sh` never delete anything on
+the device. `CaptureProbe` (app) is a `@ManualProbe`: only the scripts run it.
+
 ### Visible emulator window (manual use, WSLg)
 
 ```bash
@@ -129,11 +162,13 @@ sudo apt install libx11-6 libxcb1 libxext6 libxi6 libsm6 libice6 libxkbfile1 lib
 ## 5. Project layout
 
 ```
-app/        Android app (Compose, Material 3, single activity): the engine lab screen.
+app/        Android app (Compose, Material 3, single activity): start screen, engine lab,
+            capture browser. Build types debug and daily.
 engine/     Android library: GeckoView runtime, sessions, bridge; packages the extension.
             Instrumented gate tests in engine/src/androidTest. See docs/ENGINE.md.
 data/       Pure Kotlin JVM library, future models/normalizer/classifier (placeholder)
 mockserver/ Pure Kotlin JVM library: loopback mock of the site's traffic, used by tests
+capture/    Pure Kotlin JVM library: capture store, layer 2 taint scrubber, finalize pass
 extension/  twin-bridge WebExtension: TypeScript, esbuild, Vitest, web-ext
 gradle/     Wrapper and version catalog (libs.versions.toml holds every version)
 tools/      Environment and device scripts
@@ -212,3 +247,33 @@ Useful Gradle commands (after `source tools/env.sh`):
   simplifications.
 - **Configuration cache and build cache** are on. If a build behaves oddly after editing
   build logic, retry with `--no-configuration-cache` to rule it out.
+
+## 7. Protecting the owner's session
+
+From M2a on, the owner is logged in to the real site in the `daily` app on this emulator.
+That login lives only in the daily app's private data inside the AVD's user-data image. These
+actions destroy it, and **agents must never do any of them**:
+
+- Uninstalling the daily app: `adb uninstall io.github.chabiroael.twinbook.daily`,
+  `adb shell pm uninstall ...daily`, `./gradlew uninstallDaily` or `uninstallAll` (both disabled
+  in `app/build.gradle.kts`), or uninstalling it from Android settings or the launcher.
+- Clearing its data: `adb shell pm clear ...daily`, "Clear storage" or "Clear cache" in
+  Android settings, or deleting anything under its private storage with `run-as`
+  (`adb shell run-as ...daily rm ...`).
+- Installing a daily APK signed with a different key. Android then refuses the update, and the
+  only way forward would be an uninstall. The key is `~/.android/debug.keystore`: never delete
+  or replace it. `tools/daily-install.sh` stops if an update is refused; it never uninstalls.
+- Changing the daily build's application ID (`applicationIdSuffix = ".daily"`): that would be a
+  different app, and the logged-in one would be left behind.
+- Wiping or recreating the AVD: `emulator -wipe-data`, Android's factory reset, "Wipe Data" in
+  Device Manager, `avdmanager delete avd -n twinbook_api36`, `avdmanager create avd --force`
+  with the same name, deleting `~/.android/avd/twinbook_api36.avd/` or its `userdata-qemu.img*`
+  files, or replacing its system image.
+- Starting the emulator with any wipe option (`-wipe-data`, `-wipe-all`). `tools/emulator-start.sh`
+  never passes one. Cold boots (`-no-snapshot`) keep the data.
+
+Safe: `tools/emulator-stop.sh`, `tools/emulator-start.sh [--window]`, `tools/connected-test.sh`,
+the M1 device scripts, `tools/app-instrument.sh`, `tools/engine-instrument.sh` (they touch only
+the debug app and the engine test app), `tools/daily-install.sh` (update in place) and
+`tools/capture-pull.sh` (reads only). `tools/daily-survival-test.sh` checks this (C13 in
+docs/reports/M2a.md).
