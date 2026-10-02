@@ -19,7 +19,9 @@ source tools/env.sh
 - `/dev/kvm` readable and writable by your user, for the emulator only. Check:
   `[ -r /dev/kvm ] && [ -w /dev/kvm ] && echo ok`. See Pitfalls if it fails.
 - About 6 GB free disk for the toolchain, network access to dl.google.com,
-  services.gradle.org, github.com (JDK download), registry.npmjs.org, Maven Central.
+  services.gradle.org, github.com (JDK download), registry.npmjs.org, Maven Central, and
+  maven.mozilla.org (GeckoView only; the repository is content-filtered to
+  `org.mozilla.geckoview`). The first build downloads the 242 MB GeckoView AAR.
 
 ## 2. Install the toolchain (once)
 
@@ -52,12 +54,14 @@ tools/check.sh
 
 Runs, failing on the first error:
 
-1. In `extension/`: `npm ci` if `node_modules` is missing or stale, then `npm run check`
-   (TypeScript typecheck, Vitest tests, esbuild bundle into `extension/dist/`,
-   `web-ext lint` on `dist/`).
-2. `./gradlew check assembleDebug`: unit tests in `:data` and `:engine`, Android lint in
-   all three modules, and the debug APK
-   (`app/build/outputs/apk/debug/app-debug.apk`).
+1. In `extension/`: `npm ci` if `node_modules` is missing or stale, then `npm run check`:
+   TypeScript typecheck, Vitest tests (stream filters, bridge client, recorder parsing,
+   version stamp), esbuild bundle into `extension/dist/`, and the lint policy
+   (`node lint.mjs`): `web-ext lint` errors fail; warnings fail unless listed with a reason
+   in `extension/lint-allowlist.json` (today only `geckoViewAddons`).
+2. `./gradlew check assembleDebug`: JVM tests in `:data` and `:mockserver`, Android lint in
+   all four modules, and the debug APK (`app/build/outputs/apk/debug/app-debug.apk`,
+   about 198 MB because GeckoView's native libraries for x86_64 and arm64-v8a are inside).
 
 Extra arguments go to Gradle, for example `tools/check.sh --rerun-tasks`.
 
@@ -66,7 +70,7 @@ Extra arguments go to Gradle, for example `tools/check.sh --rerun-tasks`.
 ```bash
 tools/emulator-start.sh          # headless; returns when Android has booted (~45-65 s)
 tools/app-run.sh                 # build, install and launch the debug app
-tools/connected-test.sh          # instrumented tests (app/src/androidTest) on the emulator
+tools/connected-test.sh          # all instrumented tests (:app and :engine) on the emulator
 tools/shot.sh <name>             # screenshot to build/shots/<name>.png
 tools/emulator-stop.sh           # shut the emulator down
 ```
@@ -76,8 +80,28 @@ tools/emulator-stop.sh           # shut the emulator down
 - `emulator-start.sh` is a no-op if the emulator is already running. It cold boots every
   time (no snapshots), and switches off animations and screen-off for UI tests.
   Emulator output: `build/emulator/emulator.log`.
-- Instrumented test reports: `app/build/reports/androidTests/connected/debug/index.html`,
-  XML in `app/build/outputs/androidTest-results/connected/debug/`.
+- Instrumented test reports: `<module>/build/reports/androidTests/connected/debug/index.html`,
+  XML in `<module>/build/outputs/androidTest-results/connected/debug/`, for `app` and
+  `engine`. The engine tests log evidence lines with tag `twinbook-evidence`; Gradle keeps the
+  logcat per test next to the XML.
+- `connectedDebugAndroidTest` installs fresh APKs and uninstalls them afterwards, so every run
+  starts with empty app data. Checks that need app data kept use the scripts below.
+
+### Engine probes and measurements (keep app data)
+
+```bash
+tools/engine-instrument.sh <Class[#method]> [-e key value ...]   # one :engine test via am instrument
+tools/persistence-test.sh        # G15: cookies and storage.local across process kill
+tools/extension-update-test.sh   # G16: changed extension in a reinstalled APK, data kept
+tools/measure-memory.sh          # PSS over all app processes at four stages
+tools/measure-startup.sh [runs]  # app cold start: process start -> extension ready / lab page
+```
+
+`engine-instrument.sh` builds and installs the :engine test APK with `adb install -r` (data
+kept) and runs one class with `am instrument` in a fresh process. It prints the result and the
+`twinbook-evidence` lines. `PersistenceProbe` and `MeasurementProbe` carry the `@ManualProbe`
+annotation and are excluded from Gradle connected runs; only these scripts run them.
+`measure-startup.sh` needs the app installed (`tools/app-run.sh`).
 - Debug builds have the application ID `io.github.chabiroael.twinbook.debug`; main
   activity `io.github.chabiroael.twinbook.MainActivity`.
 
@@ -105,29 +129,35 @@ sudo apt install libx11-6 libxcb1 libxext6 libxi6 libsm6 libice6 libxkbfile1 lib
 ## 5. Project layout
 
 ```
-app/        Android app (Compose, Material 3, single activity). Packages the extension.
-engine/     Android library, future GeckoView wrapper (placeholder in M0)
+app/        Android app (Compose, Material 3, single activity): the engine lab screen.
+engine/     Android library: GeckoView runtime, sessions, bridge; packages the extension.
+            Instrumented gate tests in engine/src/androidTest. See docs/ENGINE.md.
 data/       Pure Kotlin JVM library, future models/normalizer/classifier (placeholder)
+mockserver/ Pure Kotlin JVM library: loopback mock of the site's traffic, used by tests
 extension/  twin-bridge WebExtension: TypeScript, esbuild, Vitest, web-ext
 gradle/     Wrapper and version catalog (libs.versions.toml holds every version)
 tools/      Environment and device scripts
 docs/       PLAN.md, SETUP.md, prompts/, reports/
 ```
 
-How the extension gets into the APK: `:app:buildTwinBridge` runs `npm run build` in
+How the extension gets into the APK: `:engine:buildTwinBridge` runs `npm run build` in
 `extension/` (and `npm ci` first if `node_modules` is missing or stale), producing
-`extension/dist/`. `:app:twinBridgeAssets<Variant>` copies `dist/` into a generated assets
-directory that AGP adds to the variant, so the APK contains
-`assets/extensions/twin-bridge/manifest.json` and `background.js`. Both tasks declare
-inputs and outputs and are skipped when nothing changed.
+`extension/dist/` with a per-build version (`x.y.z.N`, see docs/ENGINE.md section 7).
+`:engine:twinBridgeAssets<Variant>` copies `dist/` into a generated assets directory of the
+`:engine` library, so both the :engine test APK and the app (through the library merge)
+contain `assets/extensions/twin-bridge/manifest.json`, `background.js` and `anchor.js`, once.
+Both tasks declare inputs and outputs and are skipped when nothing changed.
+`-Ptwinbook.extensionMarker=<text>` compiles a marker into the bundle, which changes the
+version.
 
 Useful Gradle commands (after `source tools/env.sh`):
 
 ```bash
-./gradlew :data:test :engine:testDebugUnitTest   # JVM unit tests only
+./gradlew :data:test :mockserver:test            # JVM unit tests only
 ./gradlew lint                                    # Android lint, all modules
 ./gradlew :app:assembleDebug
-./gradlew :app:buildTwinBridge                    # extension only
+./gradlew :engine:assembleDebugAndroidTest        # the :engine instrumented-test APK
+./gradlew :engine:buildTwinBridge                 # extension only
 ```
 
 ## 6. Pitfalls on this machine
@@ -162,8 +192,23 @@ Useful Gradle commands (after `source tools/env.sh`):
 - **Gradle deprecation warning.** Every build prints "Deprecated Gradle features were
   used". It comes from AGP 9.4.1 itself (`Configuration.setVisible`), not from this
   project. Check with `./gradlew help --warning-mode all`.
-- **Editing `app/build.gradle.kts`** reruns `:app:buildTwinBridge` once, because the task
-  classes are declared in that script and Gradle treats a changed script as a changed
+- **Editing `engine/build.gradle.kts`** reruns `:engine:buildTwinBridge` once, because the
+  task classes are declared in that script and Gradle treats a changed script as a changed
   task implementation. Harmless (about 2 s).
+- **Emulator deadlocks during boot** with `detected a hanging thread 'QEMU2 CPU0 thread'` in
+  `build/emulator/emulator.log` and `Netsim daemon failed to start: Permission denied` in
+  `/tmp/android-$USER/netsimd/netsim_stderr.log`: `XDG_RUNTIME_DIR` names a directory that
+  does not exist (IDE and agent shells on this machine set `/run/user/1000/`).
+  `emulator-start.sh` now unsets it in that case. If you start the emulator by hand, use
+  `env -u XDG_RUNTIME_DIR emulator ...`. After such a crash, delete the stale
+  `~/.android/avd/twinbook_api36.avd/*.lock` files if no qemu process is running.
+- **Memory with GeckoView.** Peak during `tools/connected-test.sh` with the emulator running:
+  10.2 GB used of 11.7 GB plus 2.5 GB swap. It passes, but close other heavy programs, and
+  run `./gradlew --stop` if the emulator becomes sluggish.
+- **APK installs are large** (about 190 to 200 MB each for the app and the :engine test APK);
+  `adb install` takes about 10 s on the emulator.
+- **GeckoView start-up quirks** (bootstrap session, extension reinstall recovery, initial
+  about:blank) are explained in docs/ENGINE.md section 9. Do not remove them as
+  simplifications.
 - **Configuration cache and build cache** are on. If a build behaves oddly after editing
   build logic, retry with `--no-configuration-cache` to rule it out.
