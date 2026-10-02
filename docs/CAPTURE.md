@@ -240,6 +240,24 @@ id, rules version and hash, layer 1 and 2 counts, labels). The original is only 
 long, opaque and recur, credential-like key names, and long unredacted strings below
 credential-like keys, with names, lengths and counts only.
 
+### Which pulled sessions may be deleted
+
+Every tool that M2b and later milestones use reads the `-rescrub` copies only: `findings`,
+`fixtures`, `keypaths`, `leakscan --raw` and the fixture leak test (which uses an original
+too while it exists, see fixtures/README.md). An original differs from its copy only where a
+secret was replaced, and some originals still hold values the first rules did not cover. On
+the development machine, as of M2c:
+
+| Directory under `captures/` | May be deleted? |
+|---|---|
+| `20261002-172602-site`, `20261002-172927-site`, `20261002-181317-site`, `20261002-183314-site` | yes, once the matching `-rescrub` copy exists and is finalized |
+| the four `…-rescrub` copies | no: the fixtures, the leak test and the findings are built from them |
+| `20261002-110721-site`, `20261002-111209-site` (M2a, first rules, no copy) | yes; no tool uses them. Re-scrub them first if they are to be kept |
+| `…-mock`, `probe-finalized-…` | yes; mock data only |
+
+Deleting an original has one cost: `rescrub` refuses a `-rescrub` copy as its input, so
+rules added later can no longer be applied to that session offline.
+
 ## 6. Filter modes and the probe
 
 Each profile has a filter mode (`filter.setMode`): `enforce` (the M1 behaviour: the core's

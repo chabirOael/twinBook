@@ -117,7 +117,12 @@ describe("fixtures: ad rules v1 in enforce mode (5.6)", () => {
   }
 });
 
-const rawDirs = manifest.sources.flatMap((s) => [join(ROOT, "captures", `${s.session}-rescrub`), join(ROOT, "captures", s.session)]).filter((d) => existsSync(join(d, "FINALIZED")));
+// The re-scrubbed copies are what the fixtures were made from, so they are enough: they differ
+// from the originals only where a secret was replaced. The originals are used too while they
+// exist, but may be deleted (fixtures/README.md).
+const rescrubDirs = manifest.sources.map((s) => join(ROOT, "captures", `${s.session}-rescrub`)).filter((d) => existsSync(join(d, "FINALIZED")));
+const originalDirs = manifest.sources.map((s) => join(ROOT, "captures", s.session)).filter((d) => existsSync(join(d, "FINALIZED")));
+const rawDirs = [...rescrubDirs, ...originalDirs];
 const haveRaw = rawDirs.length > 0;
 
 describe("fixtures: pattern scans (always)", () => {
@@ -133,7 +138,7 @@ describe.skipIf(!haveRaw)("fixtures: leak test against the raw sessions (skipped
     const raw = rawValues(rawDirs, FIXTURES);
     const res = scanFixtures(FIXTURES, raw);
     console.info(
-      `fixture leak test: raw sessions ${rawDirs.length}; raw non-structural strings ${raw.strings.size}, identifier tokens ${raw.tokens.size}, remapped numbers ${raw.numbers.size}, non-schema keys ${raw.keys.size}; fixture files ${res.files}, strings and keys ${res.strings}, tokens ${res.tokens}, numbers ${res.numbers}; leaks ${res.leaks.length}`,
+      `fixture leak test: raw sessions ${rawDirs.length} (re-scrubbed copies ${rescrubDirs.length}, originals ${originalDirs.length}); raw non-structural strings ${raw.strings.size}, identifier tokens ${raw.tokens.size}, remapped numbers ${raw.numbers.size}, non-schema keys ${raw.keys.size}; fixture files ${res.files}, strings and keys ${res.strings}, tokens ${res.tokens}, numbers ${res.numbers}; leaks ${res.leaks.length}`,
     );
     const byKind = new Map<string, number>();
     for (const l of res.leaks) byKind.set(`${l.kind} len ${l.length} in ${l.file.split("/")[1]}`, (byKind.get(`${l.kind} len ${l.length} in ${l.file.split("/")[1]}`) ?? 0) + 1);

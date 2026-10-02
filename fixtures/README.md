@@ -46,10 +46,16 @@ Token fields show the recorder's redaction placeholders (`!R***!`, `!T:cookie:c_
 
 ## Regenerating
 
-The raw recordings stay outside git (`captures/`). On the machine that has them:
+The raw recordings stay outside git (`captures/`). The fixtures, the leak test and the
+findings need only the re-scrubbed copies `captures/20261002-172927-site-rescrub` and
+`captures/20261002-183314-site-rescrub` (the findings also use the `-rescrub` copies of
+`172602` and `181317`). The originals without `-rescrub` may be deleted once their copies
+exist; docs/CAPTURE.md, "Which pulled sessions may be deleted", lists every directory. On the
+machine that has the copies:
 
 ```bash
-tools/capture-tools.sh rescrub captures/20261002-172927-site captures/20261002-183314-site
+# only while the originals exist and the rules changed:
+tools/capture-tools.sh rescrub captures/20261002-172927-site captures/20261002-183314-site --replace
 tools/capture-tools.sh fixtures captures/20261002-172927-site-rescrub captures/20261002-183314-site-rescrub
 cd extension && npx vitest run test/fixtures.test.ts     # includes the leak test
 ```
@@ -110,8 +116,10 @@ the site sent it as a number, is `0` in the fixtures.
 - Pattern scans, always: no e-mail address, phone number, URL outside `example.com`,
   `example.net` or `example.org`, and no `facebook.com`, `fbcdn.net` or `fbsbx.com` anywhere in
   the fixtures.
-- Leak test, when the raw sessions of `manifest.json` are on the machine (both the original and
-  the re-scrubbed copy); reported as skipped otherwise. It walks every value of the raw sessions:
+- Leak test, when the raw sessions of `manifest.json` are on the machine; reported as skipped
+  otherwise. It uses the re-scrubbed copies, and the originals too while they exist. The copies
+  are enough: the fixtures were made from them, and an original differs from its copy only
+  where a secret was replaced. The test prints how many of each it used. It walks every value of the raw sessions:
   every response body (GraphQL, `/ajax/*`, page document islands, preloads), every form field and
   every URL parameter. It collects every non-structural string of 4 or more characters, the
   identifier tokens inside them (runs of 8+ letters and digits with a digit, or 6+ digits),
