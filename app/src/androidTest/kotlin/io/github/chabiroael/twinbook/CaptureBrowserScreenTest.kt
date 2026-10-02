@@ -212,9 +212,11 @@ class CaptureBrowserScreenTest {
         // reports the field focused.
         waitFor("password focused") { ("focus" to "pass") in server.logs(run) }
         awaitEditor("password", password = true)
-        // One key at a time, each waited for on the page, as a person types. A burst sent while
-        // the input method restarts on the newly focused field can lose or swap keys before they
-        // reach the app (docs/reports/M3a.md section 4); keyEventBurstDiagnostic reports that case.
+        // Key events go through the input method before they reach the app. Until it has restarted
+        // on the newly focused field, keys sent to it are lost or swapped (docs/reports/M3a.md
+        // section 4), so wait for that, then type one key at a time, each waited for on the page,
+        // as a person types. keyEventBurstDiagnostic reports the burst case.
+        awaitInputMethodOn(InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD)
         typeKeyByKey("Hw-Pass1")
         evidence("C10 text input: email via InputConnection.commitText reached the page as 'ime-user@example.test'; password via keyboard key events (input keyboard text, one key at a time) reached it as 'Hw-Pass1'; input events logged: ${server.logs(run).count { it.first != "layout" }}")
 
@@ -227,6 +229,22 @@ class CaptureBrowserScreenTest {
         compose.onNodeWithTag("capture-stop").performClick()
         waitFor("finalized", 60_000) { (browser.recorder.state.value as? CaptureRecorder.State.Idle)?.last?.finalized == true }
         evidence("C10 capture stopped from the UI: ${browser.recorder.state.value}")
+    }
+
+    /**
+     * Waits until the system's input method is bound to this app's field of [inputType] (its
+     * `curEditorInfo` in `dumpsys input_method`), then for the restart that follows within about
+     * 50 ms on a focus change.
+     */
+    private fun awaitInputMethodOn(inputType: Int) {
+        val pkg = instrumentation.targetContext.packageName
+        val type = "inputType=0x" + Integer.toHexString(inputType)
+        waitFor("input method on the $type field", 15_000) {
+            val dump = shell("dumpsys input_method")
+            val editor = dump.substringAfter("curEditorInfo:", "").lines().take(8).joinToString(" ")
+            type in editor && "packageName=$pkg " in "$editor "
+        }
+        Thread.sleep(400)
     }
 
     /** Sends [text] as key events, one character at a time, waiting until the page has each. */
@@ -254,13 +272,17 @@ class CaptureBrowserScreenTest {
         shell("input keyboard text Hw-Pass1")
         val deadline = System.currentTimeMillis() + 5_000
         while (System.currentTimeMillis() < deadline && ("pass" to "Hw-Pass1") !in server.logs(run)) Thread.sleep(100)
-        val got = server.logs(run).lastOrNull { it.first == "pass" }?.second
+        // The page logs every value in a request of its own, so they can arrive out of order:
+        // judge from the set of values the field held, not from the last one to arrive.
+        val values = server.logs(run).filter { it.first == "pass" }.map { it.second }
+        val swapped = values.firstOrNull { it.length == 8 && it != "Hw-Pass1" && it.toList().sorted() == "Hw-Pass1".toList().sorted() }
         val result = when {
-            got == "Hw-Pass1" -> "ok"
-            got != null && got.length == 8 && got.toList().sorted() == "Hw-Pass1".toList().sorted() -> "swapped"
+            "Hw-Pass1" in values -> "ok"
+            swapped != null -> "swapped"
             else -> "lost"
         }
-        evidence("C10 BURST DIAGNOSTIC result=$result got=${got?.let { "'$it'" } ?: "nothing"} sequence=${server.logs(run).filter { it.first == "pass" }.map { it.second }}")
+        val got = if (result == "ok") "Hw-Pass1" else swapped ?: values.maxByOrNull { it.length }
+        evidence("C10 BURST DIAGNOSTIC result=$result got=${got?.let { "'$it'" } ?: "nothing"} sequence=$values")
     }
 
     @Test
