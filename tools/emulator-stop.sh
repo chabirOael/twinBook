@@ -19,6 +19,10 @@ if [ "${running}" -eq 0 ]; then
   exit 0
 fi
 
+# `emu kill` ends qemu at once, without the guest writing its page cache to the virtual disk.
+# An app installed seconds earlier was lost that way (docs/reports/M3a.md, problems): flush first.
+adb -s "${serial}" shell sync > /dev/null 2>&1 || true
+sleep 2
 adb -s "${serial}" emu kill > /dev/null 2>&1 || true
 if [ -n "${pid}" ]; then
   for _ in $(seq 1 30); do
