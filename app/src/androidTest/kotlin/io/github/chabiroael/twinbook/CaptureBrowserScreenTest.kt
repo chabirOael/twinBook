@@ -1,6 +1,7 @@
 package io.github.chabiroael.twinbook
 
 import android.os.ParcelFileDescriptor
+import android.text.InputType
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -9,10 +10,15 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.chabiroael.twinbook.engine.capture.CaptureRecorder
 import io.github.chabiroael.twinbook.mockserver.MockServer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -29,6 +35,9 @@ import org.mozilla.geckoview.GeckoView
  * keyboard produces), custom schemes and intents ignored, new windows loaded in place,
  * permissions denied, alert/confirm/prompt, back and reload. Taps go through `input tap` at the
  * positions the mock pages report for their elements.
+ *
+ * Every test starts from the same state, whatever the previous test left behind: no capture
+ * running or finalizing, no soft keyboard, the app's window focused (see [resetSharedState]).
  */
 @RunWith(AndroidJUnit4::class)
 class CaptureBrowserScreenTest {
@@ -42,6 +51,7 @@ class CaptureBrowserScreenTest {
 
     @Before
     fun setUp() {
+        resetSharedState("before")
         server = MockServer().start()
         instrumentation.runOnMainSync {
             browser = CaptureBrowser.configureForTest(
@@ -55,7 +65,48 @@ class CaptureBrowserScreenTest {
 
     @After
     fun tearDown() {
-        server.close()
+        try {
+            resetSharedState("after")
+        } finally {
+            if (::server.isInitialized) server.close()
+        }
+    }
+
+    /**
+     * The recorder is process-wide and the soft keyboard outlives the activity, so a test that
+     * fails half-way (while recording, or with a field focused) would otherwise break the next
+     * test. Waits for a finalize to end, discards a running capture, hides the keyboard and
+     * waits until the app's window has the focus, so taps are not injected into another window.
+     */
+    private fun resetSharedState(phase: String) {
+        lateinit var recorder: CaptureRecorder
+        instrumentation.runOnMainSync { recorder = AppEngine.recorder(instrumentation.targetContext) }
+        settle("$phase: no capture finalizing", 60_000) { recorder.state.value !is CaptureRecorder.State.Finalizing }
+        if (recorder.isRecording) {
+            runBlocking(Dispatchers.Main) { recorder.discard() }
+            Log.w("twinbook-evidence", "C10 $phase: a capture was still running and was discarded")
+        }
+        val activity = compose.activity
+        val decor = activity.window.decorView
+        instrumentation.runOnMainSync {
+            activity.currentFocus?.clearFocus()
+            WindowCompat.getInsetsController(activity.window, decor).hide(WindowInsetsCompat.Type.ime())
+        }
+        settle("$phase: soft keyboard hidden", 10_000) {
+            var shown = true
+            instrumentation.runOnMainSync { shown = ViewCompat.getRootWindowInsets(decor)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
+            !shown
+        }
+        settle("$phase: app window focused", 10_000) { activity.hasWindowFocus() }
+        assertTrue("$phase: recorder idle", recorder.state.value is CaptureRecorder.State.Idle)
+    }
+
+    private fun settle(what: String, timeoutMs: Long, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition()) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("timed out waiting for $what")
+            Thread.sleep(100)
+        }
     }
 
     private fun evidence(line: String) = Log.i("twinbook-evidence", line)
@@ -106,15 +157,45 @@ class CaptureBrowserScreenTest {
 
     private fun log(r: String, field: String): String? = server.lastLog(r, field)
 
+    private fun documentLoads() = server.requests.count { it.path == "/login.html" }
+
+    /**
+     * Waits until GeckoView's input side has caught up with the page's focus: it offers an
+     * input connection for a text field, a password field when [password]. The page reports
+     * the focus before Gecko has told the Java side, and key events sent in between are lost.
+     */
+    private fun awaitEditor(what: String, password: Boolean) {
+        val view = geckoView()
+        waitFor("input connection for $what") {
+            var ready = false
+            instrumentation.runOnMainSync {
+                val info = EditorInfo()
+                val ic = view.onCreateInputConnection(info)
+                val isPassword = (info.inputType and InputType.TYPE_MASK_VARIATION) == InputType.TYPE_TEXT_VARIATION_PASSWORD
+                ready = ic != null && (info.inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT && isPassword == password
+            }
+            ready
+        }
+    }
+
     @Test
     fun textInputFromInputMethodAndKeyEvents() {
-        val layout = awaitLayout(run, 0)
+        awaitLayout(run, 0)
+        val loads = documentLoads()
         compose.onNodeWithTag("capture-start").performClick()
         waitFor("recording") { browser.recorder.state.value is CaptureRecorder.State.Recording }
+        // Capture start reloads the page (M2b). A tap before the reloaded page has finished
+        // loading lands on the old page and its focus is lost, so wait for the reloaded
+        // document's own layout report and tap at its positions.
+        waitFor("reload after capture start") { documentLoads() > loads }
+        val layout = awaitLayout(run, 1)
+        waitFor("reloaded page loaded") { !browser.current.page.value.loading }
+        evidence("C10 capture start reloaded the page (login.html loads $loads -> ${documentLoads()}); typing starts on the reloaded page")
 
         // On-screen keyboard path: the input method commits text through the InputConnection.
         tap(layout, "email")
         waitFor("email focused") { ("focus" to "email") in server.logs(run) }
+        awaitEditor("email", password = false)
         Thread.sleep(500)
         val view = geckoView()
         instrumentation.runOnMainSync {
@@ -130,6 +211,7 @@ class CaptureBrowserScreenTest {
         // Key events sent while the focus is still moving can be lost; wait until the page
         // reports the field focused.
         waitFor("password focused") { ("focus" to "pass") in server.logs(run) }
+        awaitEditor("password", password = true)
         Thread.sleep(500)
         shell("input keyboard text Hw-Pass1")
         waitFor("password from key events") { ("pass" to "Hw-Pass1") in server.logs(run) }
