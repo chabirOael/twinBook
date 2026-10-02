@@ -244,6 +244,8 @@ function listeners(): Listener<unknown>[] {
 export interface CaptureHooks {
   /** Called when a capture that includes the site starts (true) and ends (false). */
   siteListening(on: boolean): void;
+  /** Called when any capture starts (true) and ends (false). Strict mode is off meanwhile. */
+  captureActive?(on: boolean): void;
   extensionStartedAt: number;
 }
 
@@ -259,6 +261,7 @@ export function installCapture(bridge: BridgeClient, hooks: CaptureHooks): void 
     for (const l of active) l.remove();
     active = [];
     if (session.profiles.has("site")) hooks.siteListening(false);
+    hooks.captureActive?.(false);
   };
 
   bridge.handle("capture.start", (params) => {
@@ -290,6 +293,8 @@ export function installCapture(bridge: BridgeClient, hooks: CaptureHooks): void 
         }
       },
     });
+    // Strict mode must not change anything a capture records: switch it off first.
+    hooks.captureActive?.(true);
     session = { id, profiles, startedAt: Date.now(), redactor, transport, counters, openBodies: new Set(), pending: new Set(), errorSamples: [], stopping: false, nextBody: 1 };
     current = session;
     active = listeners();

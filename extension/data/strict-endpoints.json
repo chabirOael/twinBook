@@ -1,0 +1,14 @@
+{
+  "about": "Strict mode (docs/SHELL.md): the site's own logging endpoints that twin-bridge cancels when the owner turns strict mode on. Only the mobile site's beacons named in docs/findings/payloads.md section 12. A request is cancelled when its host is one of the site's own hosts (or the test mock's) and its path is exactly one of these (with or without the trailing slash). Edit this list only, one reason per entry.",
+  "version": 1,
+  "endpoints": [
+    {
+      "path": "/ajax/weblite_load_logging/",
+      "why": "Mobile site (web lite) load logging beacon: 13 beacons in session 181317 and the only own-host request while the owner browsed in session 172602 (payloads.md sections 11 and 12). Carries client timing and state, nothing the page needs back."
+    },
+    {
+      "path": "/ajax/weblite_resources_timing_logging/",
+      "why": "Mobile site (web lite) resource timing beacon: 3 beacons in session 181317 (payloads.md section 12). Reports how long each resource took to load; the page ignores the answer."
+    }
+  ]
+}
