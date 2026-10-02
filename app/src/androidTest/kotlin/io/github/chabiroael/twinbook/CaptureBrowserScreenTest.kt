@@ -114,7 +114,8 @@ class CaptureBrowserScreenTest {
 
         // On-screen keyboard path: the input method commits text through the InputConnection.
         tap(layout, "email")
-        Thread.sleep(1_000)
+        waitFor("email focused") { ("focus" to "email") in server.logs(run) }
+        Thread.sleep(500)
         val view = geckoView()
         instrumentation.runOnMainSync {
             val ic = view.onCreateInputConnection(EditorInfo()) ?: throw AssertionError("no input connection")
@@ -126,7 +127,10 @@ class CaptureBrowserScreenTest {
         // Host keyboard path: key events from a keyboard input device, as the emulator window
         // delivers them.
         tap(layout, "pass")
-        Thread.sleep(1_000)
+        // Key events sent while the focus is still moving can be lost; wait until the page
+        // reports the field focused.
+        waitFor("password focused") { ("focus" to "pass") in server.logs(run) }
+        Thread.sleep(500)
         shell("input keyboard text Hw-Pass1")
         waitFor("password from key events") { ("pass" to "Hw-Pass1") in server.logs(run) }
         evidence("C10 text input: email via InputConnection.commitText reached the page as 'ime-user@example.test'; password via keyboard key events (input keyboard text) reached it as 'Hw-Pass1'; input events logged: ${server.logs(run).count { it.first != "layout" }}")

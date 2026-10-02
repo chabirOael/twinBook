@@ -180,6 +180,7 @@ a.big { line-height: 64px; background: #eef; text-align: center; }
 <script>$LOG_SCRIPT
 ["email", "pass"].forEach(function (id) {
   document.getElementById(id).addEventListener("input", function (e) { log(id, e.target.value); });
+  document.getElementById(id).addEventListener("focus", function () { log("focus", id); });
 });
 window.addEventListener("load", function () { layout(["email", "pass", "go"]); });
 </script></body></html>"""
