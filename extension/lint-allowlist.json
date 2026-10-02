@@ -1,0 +1,11 @@
+{
+  "comment": "web-ext lint warnings that are expected for a GeckoView built-in extension. Every other warning fails tools/check.sh. Match is on code and file; add an entry only with a reason.",
+  "warnings": [
+    {
+      "code": "MANIFEST_PERMISSIONS",
+      "file": "manifest.json",
+      "messageIncludes": "geckoViewAddons",
+      "reason": "geckoViewAddons is a GeckoView-only permission that AMO's linter does not know. GeckoView needs it for built-in extensions that use GeckoView-specific APIs; twin-bridge is never published on AMO."
+    }
+  ]
+}
