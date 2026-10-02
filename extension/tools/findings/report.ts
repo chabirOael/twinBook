@@ -5,8 +5,8 @@
 import { readFileSync } from "node:fs";
 import { createAdRule, type AdRules } from "../../src/lib/adRules";
 import { NdjsonStreamFilter } from "../../src/lib/ndjsonFilter";
-import { classify, feedEdges, keyPaths, locate, LOCATORS, shapeOf, type EdgeClass, type FeedEdge } from "./feed";
-import { safeKey, Session, type Obj } from "./session";
+import { classify, feedEdges, keyPaths, locate, LOCATORS, prefetchedResults, shapeOf, type EdgeClass, type FeedEdge } from "./feed";
+import { getPath, safeKey, Session, type Obj } from "./session";
 import * as sections from "./sections";
 
 export function loadRules(file: string): AdRules {
@@ -132,6 +132,44 @@ export function feedSections(out: Out, sessions: Session[], rules: AdRules): Fee
     }
   }
   out.p("document preload (first page):", edges.filter((e) => e.source === "document").map((e) => classes.get(e)!.cls).join(", "));
+
+  out.h("Feed pagination chain (equality of cursors only; no value is printed)");
+  for (const s of sessions) {
+    const pages: { id: string; cursor: string | undefined; end: string | undefined; edgeCursors: string[]; count: unknown }[] = [];
+    for (const r of s.select((i) => i.own && i.type === "main_frame")) {
+      for (const p of prefetchedResults(s, r)) {
+        const end = getPath(p.result, ["data", "page_info", "end_cursor"]);
+        if (p.preloader.includes("CometModernHomeFeedQuery") && typeof end === "string") pages.push({ id: "document", cursor: undefined, end, edgeCursors: [], count: undefined });
+      }
+    }
+    const reqs = s.graphql().filter((r) => s.field(r, "fb_api_req_friendly_name") === "CometNewsFeedPaginationQuery" && r.request !== undefined);
+    reqs.sort((a, b) => Number(a.request!.t) - Number(b.request!.t));
+    for (const r of reqs) {
+      let vars: Obj = {};
+      try {
+        vars = JSON.parse(s.field(r, "variables") ?? "{}") as Obj;
+      } catch {
+        vars = {};
+      }
+      let end: string | undefined;
+      const edgeCursors: string[] = [];
+      for (const d of s.ndjson(r).docs) {
+        const pe = getPath(d, ["data", "page_info", "end_cursor"]);
+        if (typeof pe === "string") end = pe;
+        const c = getPath(d, ["data", "cursor"]);
+        if (typeof c === "string") edgeCursors.push(c);
+        const edges = getPath(d, ["data", "viewer", "news_feed", "edges"]);
+        if (Array.isArray(edges)) for (const e of edges) if (typeof getPath(e, ["cursor"]) === "string") edgeCursors.push(getPath(e, ["cursor"]) as string);
+      }
+      pages.push({ id: `rid ${r.rid}`, cursor: typeof vars["cursor"] === "string" ? (vars["cursor"] as string) : undefined, end, edgeCursors, count: vars["count"] });
+    }
+    pages.forEach((p, i) => {
+      const prev = i > 0 ? pages[i - 1] : undefined;
+      const rel = prev === undefined ? "first recorded page" : p.cursor !== undefined && p.cursor === prev.end ? "cursor = previous end_cursor" : p.cursor !== undefined && prev.edgeCursors.includes(p.cursor) ? "cursor = an edge cursor of the previous page" : "cursor not from the previous recorded page";
+      const last = p.edgeCursors.length > 0 ? String(p.end === p.edgeCursors[p.edgeCursors.length - 1]) : "-";
+      out.p(`  ${s.sourceId} ${p.id}: count ${String(p.count ?? "-")}, ${rel}; end_cursor = last edge cursor: ${last}; edges ${p.edgeCursors.length}`);
+    });
+  }
 
   out.h("4. Feed story anatomy");
   const shapes = new Map<string, number>();
