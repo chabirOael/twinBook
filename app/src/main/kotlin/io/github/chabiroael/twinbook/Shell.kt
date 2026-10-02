@@ -3,6 +3,7 @@ package io.github.chabiroael.twinbook
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Process
 import android.os.SystemClock
@@ -66,9 +67,18 @@ interface ExternalOpener {
 class AndroidOpener(private val context: Context) : ExternalOpener {
     override fun openInBrowser(url: String) {
         val view = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        // The selector makes Android pick the default browser rather than an app that claims the link.
-        val inBrowser = Intent(view).apply { selector = Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_BROWSER) }
-        if (!start(inBrowser)) start(view)
+        // The default browser is the app that opens a plain https link; sent there directly, an
+        // app that claims this particular link (say, a video app) does not take it over. Without a
+        // default browser, Android asks.
+        val browser = defaultBrowser()
+        if (browser == null || !start(Intent(view).setPackage(browser))) start(view)
+    }
+
+    private fun defaultBrowser(): String? {
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://")).addCategory(Intent.CATEGORY_BROWSABLE)
+        val pkg = context.packageManager.resolveActivity(probe, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+        // "android" is the chooser: no default is set.
+        return pkg?.takeIf { it != "android" && it != context.packageName }
     }
 
     override fun openWithSystem(url: String) {
