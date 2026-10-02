@@ -212,10 +212,11 @@ class CaptureBrowserScreenTest {
         // reports the field focused.
         waitFor("password focused") { ("focus" to "pass") in server.logs(run) }
         awaitEditor("password", password = true)
-        Thread.sleep(500)
-        shell("input keyboard text Hw-Pass1")
-        waitFor("password from key events") { ("pass" to "Hw-Pass1") in server.logs(run) }
-        evidence("C10 text input: email via InputConnection.commitText reached the page as 'ime-user@example.test'; password via keyboard key events (input keyboard text) reached it as 'Hw-Pass1'; input events logged: ${server.logs(run).count { it.first != "layout" }}")
+        // One key at a time, each waited for on the page, as a person types. A burst sent while
+        // the input method restarts on the newly focused field can lose or swap keys before they
+        // reach the app (docs/reports/M3a.md section 4); keyEventBurstDiagnostic reports that case.
+        typeKeyByKey("Hw-Pass1")
+        evidence("C10 text input: email via InputConnection.commitText reached the page as 'ime-user@example.test'; password via keyboard key events (input keyboard text, one key at a time) reached it as 'Hw-Pass1'; input events logged: ${server.logs(run).count { it.first != "layout" }}")
 
         waitFor("records") { (browser.recorder.state.value as? CaptureRecorder.State.Recording)?.counters?.records ?: 0 > 0 }
         compose.waitForIdle()
@@ -226,6 +227,40 @@ class CaptureBrowserScreenTest {
         compose.onNodeWithTag("capture-stop").performClick()
         waitFor("finalized", 60_000) { (browser.recorder.state.value as? CaptureRecorder.State.Idle)?.last?.finalized == true }
         evidence("C10 capture stopped from the UI: ${browser.recorder.state.value}")
+    }
+
+    /** Sends [text] as key events, one character at a time, waiting until the page has each. */
+    private fun typeKeyByKey(text: String) {
+        for (i in 1..text.length) {
+            val c = text[i - 1]
+            shell(if (c == '-') "input keyboard keyevent KEYCODE_MINUS" else "input keyboard text $c")
+            waitFor("'${text.substring(0, i)}' on the page", 10_000) { ("pass" to text.substring(0, i)) in server.logs(run) }
+        }
+    }
+
+    /**
+     * The burst variant of the key-event test, kept as a diagnostic: it sends `Hw-Pass1` in one
+     * `input keyboard text` right after the password field has an input connection, and reports
+     * what reached the page. It never fails on a lost or swapped key (S10, tools/typing-diagnostic.sh).
+     */
+    @Test
+    fun keyEventBurstDiagnostic() {
+        val layout = awaitLayout(run, 0)
+        waitFor("page loaded") { !browser.current.page.value.loading }
+        tap(layout, "pass")
+        waitFor("password focused") { ("focus" to "pass") in server.logs(run) }
+        awaitEditor("password", password = true)
+        Thread.sleep(500)
+        shell("input keyboard text Hw-Pass1")
+        val deadline = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < deadline && ("pass" to "Hw-Pass1") !in server.logs(run)) Thread.sleep(100)
+        val got = server.logs(run).lastOrNull { it.first == "pass" }?.second
+        val result = when {
+            got == "Hw-Pass1" -> "ok"
+            got != null && got.length == 8 && got.toList().sorted() == "Hw-Pass1".toList().sorted() -> "swapped"
+            else -> "lost"
+        }
+        evidence("C10 BURST DIAGNOSTIC result=$result got=${got?.let { "'$it'" } ?: "nothing"} sequence=${server.logs(run).filter { it.first == "pass" }.map { it.second }}")
     }
 
     @Test

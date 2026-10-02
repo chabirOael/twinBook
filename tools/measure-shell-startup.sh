@@ -42,7 +42,9 @@ for i in $(seq 1 "${runs}"); do
   if [ "${i}" -gt 1 ] && [ $(( (i - 1) % restart_every )) = 0 ]; then
     tools/emulator-stop.sh > /dev/null
     tools/emulator-start.sh > /dev/null
-    adb reverse "tcp:${PORT}" "tcp:${PORT}" > /dev/null
+    # The device can show as offline for a moment right after boot.
+    adb wait-for-device
+    until adb reverse "tcp:${PORT}" "tcp:${PORT}" > /dev/null 2>&1; do sleep 2; done
     until adb shell run-as "${PKG}" true 2> /dev/null; do sleep 2; done
     warm_up
   fi

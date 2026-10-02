@@ -282,7 +282,8 @@ Useful Gradle commands (after `source tools/env.sh`):
   the host's OOM killer ends the emulator, which is a power cut for the AVD. Twice in M3a.
   Restart the emulator (`tools/emulator-stop.sh` then `tools/emulator-start.sh`) before long
   device sessions and after about 20 cold starts, stop Gradle daemons when only the emulator is
-  needed, and watch `ps -o rss= -C qemu-system-x86_64`. `TWINBOOK_EMULATOR_GPU=guest` was tried:
+  needed, and watch `ps -o rss= -C qemu-system-x86_64`. `tools/emulator-start.sh` treats an
+  emulator listed as `offline` (one that is still going down) as not running. `TWINBOOK_EMULATOR_GPU=guest` was tried:
   this system image falls back to host-side `lavapipe`, which grows the same way.
 - **`emu kill` loses unwritten data.** `tools/emulator-stop.sh` now runs `sync` in the guest
   first. Before M3a, an update of the daily app installed two seconds before a stop was lost:

@@ -39,7 +39,9 @@ fi
 
 serial="${TWINBOOK_EMULATOR_SERIAL}"
 adb start-server > /dev/null
-if adb devices | grep -q "^${serial}[[:space:]]"; then
+# Only a device that answers counts: right after tools/emulator-stop.sh the old one can still be
+# listed for a moment as "offline".
+if adb devices | grep -q "^${serial}[[:space:]]*device$"; then
   echo "emulator ${serial} already running"
   exit 0
 fi

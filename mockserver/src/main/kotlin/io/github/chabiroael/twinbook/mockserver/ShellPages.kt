@@ -123,9 +123,13 @@ window.addEventListener("load", function () { $onLoad });
 <a class="big internal" id="dark" href="/shell/dark.html">dark</a>
 <a class="big internal" id="ads" href="/shell/ads.html">ads</a>
 <a class="big internal" id="beacons" href="/shell/beacons.html">beacons</a>
-<a class="big" id="adsnamed" href="/shell/ads.html">ads under the mock's host name</a>""",
+<a class="big" id="adsnamed" href="/shell/ads.html">ads under the mock's host name</a>
+<a class="big" id="localout" href="/shell/feed.html">outbound to localhost (manual checks)</a>""",
         """document.getElementById("adsnamed").href = "http://$NAMED_HOST:" + location.port + "/shell/ads.html";
-layout(["feed", "outbound", "direct", "newwin", "tel", "mailto", "geo", "long", "form", "dark", "ads", "beacons", "adsnamed"]); log("loaded", "home");""",
+// localhost is not one of the mock's own hosts: a link there leaves the shell like an outbound
+// link, but the browser reaches this mock through adb reverse, never the internet.
+document.getElementById("localout").href = "http://localhost:" + location.port + "/shell/feed.html?from=outbound&fbclid=IwAR0local&utm_source=mock";
+layout(["feed", "outbound", "direct", "newwin", "tel", "mailto", "geo", "long", "form", "dark", "ads", "beacons", "adsnamed", "localout"]); log("loaded", "home");""",
     )
 
     val LONG: String = page(

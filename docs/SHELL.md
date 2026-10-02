@@ -186,9 +186,12 @@ Site pages load only after `Engine.awaitReady()`, which now waits for both exten
   default), so a normal start needs one probe, answered as soon as it filters. On its very first
   install it does not suspend (it lets requests through while it compiles its lists, about 8 s
   on the emulator); the probe catches that too: probes pass until it filters.
-- If uBlock Origin does not filter within 10 s it is reinstalled once (the add-on start-up
-  state quirk of docs/ENGINE.md section 9 applies to it too); after 60 s it is reported as
-  failed and the shell shows the error with a way to turn ad hiding off.
+- If an already installed uBlock Origin does not filter within 10 s it is reinstalled once
+  (the add-on start-up state quirk of docs/ENGINE.md section 9 applies to it too). On its first
+  install (it is not in `WebExtensionController.list()` yet) it is not: it may take longer than
+  10 s to compile its lists on a slow phone, and a reinstall would start that over. After 60 s
+  without filtering it is reported as failed and the shell shows the error with a way to turn
+  ad hiding off.
 - With ad hiding off, uBlock Origin is disabled before the first page and not waited for.
 
 Start-up modes (`EngineConfig.startupMode`):
@@ -199,8 +202,17 @@ Start-up modes (`EngineConfig.startupMode`):
 | `INSTALL_EVERY_START` | `installBuiltIn` for both, which starts their background scripts at once |
 
 Measured over 20 cold starts each on the emulator (`tools/measure-shell-startup.sh`, numbers in
-docs/reports/M3a.md section 3): MEASUREMENT_SUMMARY. Chosen: CHOSEN_MODE
-(`AppEngine.DEFAULT_STARTUP_MODE`).
+docs/reports/M3a.md section 3), from process start, medians (min to max):
+
+| Mode | twin-bridge ready | uBlock Origin ready (= both ready) | first page shown | probes | passed unfiltered |
+|---|---|---|---|---|---|
+| `ENSURE_BUILT_IN` | 3,886 ms (3,076 to 7,397) | 5,322 ms (4,290 to 9,095) | 6,320 ms (5,045 to 10,076) | 20 (1 per start) | 0 |
+| `INSTALL_EVERY_START` | 4,737 ms (3,915 to 14,079) | 6,378 ms (5,298 to 18,977) | 6,690 ms (5,578 to 19,516) | 20 (1 per start) | 0 |
+
+Chosen: `ENSURE_BUILT_IN` (`AppEngine.DEFAULT_STARTUP_MODE`): about 1 s faster to ready, a
+narrower spread, no failed start in 20, and it keeps the extensions' state untouched at every
+start. Installing at every start gains nothing: the bootstrap session already starts the
+background scripts as soon as Gecko is up.
 
 The proof that no request escapes filtering during start-up is the same script: each of the 40
 cold starts opens a mock page whose image `/__utm.gif` is on the list, and the mock's request log

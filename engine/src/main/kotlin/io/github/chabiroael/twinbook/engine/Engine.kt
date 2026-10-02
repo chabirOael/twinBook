@@ -165,17 +165,26 @@ class Engine private constructor(context: Context, val config: EngineConfig) {
 
     private fun installBlocker(b: BlockerConfig) {
         val controller = runtime.webExtensionController
-        val install = when (config.startupMode) {
-            StartupMode.ENSURE_BUILT_IN -> controller.ensureBuiltIn(b.location, b.id)
-            StartupMode.INSTALL_EVERY_START -> controller.installBuiltIn(b.location)
+        scope.launch {
+            // A blocker installed now for the first time compiles its filter lists and lets requests
+            // through meanwhile (no suspension on a first install), which can take longer than the
+            // reinstall timeout on a slow device: then reinstalling would only start that over. So
+            // the reinstall recovery is for an already installed blocker only.
+            val known = runCatching { controller.list().await().orEmpty().any { it.id == b.id } }.getOrDefault(true)
+            if (!known || config.startupMode == StartupMode.INSTALL_EVERY_START) blockerReinstalled = true
+            if (!known) Log.i(TAG, "content blocker not installed yet: first install")
+            val install = when (config.startupMode) {
+                StartupMode.ENSURE_BUILT_IN -> controller.ensureBuiltIn(b.location, b.id)
+                StartupMode.INSTALL_EVERY_START -> controller.installBuiltIn(b.location)
+            }
+            install.accept(
+                { ext -> ext?.let { scope.launch { onBlockerInstalled(it) } } },
+                { error ->
+                    Log.e(TAG, "content blocker install failed", error)
+                    blockerFlow.value = BlockerState.Failed(error?.toString() ?: "unknown error")
+                },
+            )
         }
-        install.accept(
-            { ext -> ext?.let { scope.launch { onBlockerInstalled(it) } } },
-            { error ->
-                Log.e(TAG, "content blocker install failed", error)
-                blockerFlow.value = BlockerState.Failed(error?.toString() ?: "unknown error")
-            },
-        )
     }
 
     private suspend fun onBlockerInstalled(installed: WebExtension) {
@@ -198,9 +207,10 @@ class Engine private constructor(context: Context, val config: EngineConfig) {
      * Loads a probe page in [session] until the content blocker cancels its probe request. Its
      * only subresource is [BlockerConfig.probeUrl], on the loopback interface, which a default
      * list of the blocker blocks; twin-bridge reports how each probe request ended. A request
-     * that "passed" means the blocker was not filtering yet. If the blocker is not filtering
-     * after [EngineConfig.backgroundStartTimeoutMs], it is reinstalled once (the add-on start-up
-     * state quirk applies to it too); after [BlockerConfig.failAfterMs] it is reported failed.
+     * that "passed" means the blocker was not filtering yet. If an already installed blocker is
+     * not filtering after [EngineConfig.backgroundStartTimeoutMs], it is reinstalled once (the
+     * add-on start-up state quirk applies to it too; never on its first install, see
+     * installBlocker); after [BlockerConfig.failAfterMs] it is reported failed.
      */
     private suspend fun probeBlocker(session: GeckoSession) {
         val b = config.blocker ?: return
