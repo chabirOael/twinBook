@@ -30,12 +30,18 @@ class Prompts : PromptDelegate {
     private val pendingFlow = MutableStateFlow<PendingPrompt?>(null)
     val pending: StateFlow<PendingPrompt?> = pendingFlow.asStateFlow()
 
-    private fun <P : PromptDelegate.BasePrompt> show(prompt: P, build: (complete: (PromptResponse) -> Unit) -> PendingPrompt): GeckoResult<PromptResponse> {
+    private fun <P : PromptDelegate.BasePrompt> show(prompt: P, build: (complete: (() -> PromptResponse) -> Unit) -> PendingPrompt): GeckoResult<PromptResponse> {
         val result = GeckoResult<PromptResponse>()
         var shown: PendingPrompt? = null
-        val complete: (PromptResponse) -> Unit = { response ->
+        var answered = false
+        // prompt.dismiss() and prompt.confirm() may be called only once per prompt, so the
+        // response is built only for the first answer.
+        val complete: (() -> PromptResponse) -> Unit = { response ->
             if (pendingFlow.value === shown) pendingFlow.value = null
-            if (!prompt.isComplete) result.complete(response)
+            if (!answered && !prompt.isComplete) {
+                answered = true
+                result.complete(response())
+            }
         }
         shown = build(complete)
         prompt.setDelegate(object : PromptDelegate.PromptInstanceDelegate {
@@ -48,30 +54,30 @@ class Prompts : PromptDelegate {
     }
 
     override fun onAlertPrompt(session: GeckoSession, prompt: PromptDelegate.AlertPrompt): GeckoResult<PromptResponse> =
-        show(prompt) { complete -> PendingPrompt.Alert(prompt.message.orEmpty()) { complete(prompt.dismiss()) } }
+        show(prompt) { complete -> PendingPrompt.Alert(prompt.message.orEmpty()) { complete { prompt.dismiss() } } }
 
     override fun onButtonPrompt(session: GeckoSession, prompt: PromptDelegate.ButtonPrompt): GeckoResult<PromptResponse> =
         show(prompt) { complete ->
             PendingPrompt.Confirm(prompt.message.orEmpty()) { ok ->
-                complete(prompt.confirm(if (ok) PromptDelegate.ButtonPrompt.Type.POSITIVE else PromptDelegate.ButtonPrompt.Type.NEGATIVE))
+                complete { prompt.confirm(if (ok) PromptDelegate.ButtonPrompt.Type.POSITIVE else PromptDelegate.ButtonPrompt.Type.NEGATIVE) }
             }
         }
 
     override fun onTextPrompt(session: GeckoSession, prompt: PromptDelegate.TextPrompt): GeckoResult<PromptResponse> =
         show(prompt) { complete ->
-            PendingPrompt.Text(prompt.message.orEmpty(), prompt.defaultValue.orEmpty()) { text -> complete(if (text == null) prompt.dismiss() else prompt.confirm(text)) }
+            PendingPrompt.Text(prompt.message.orEmpty(), prompt.defaultValue.orEmpty()) { text -> complete { if (text == null) prompt.dismiss() else prompt.confirm(text) } }
         }
 
     override fun onChoicePrompt(session: GeckoSession, prompt: PromptDelegate.ChoicePrompt): GeckoResult<PromptResponse> {
         val choices = prompt.choices.filter { !it.separator && !it.disabled && it.items == null }
         if (prompt.type == PromptDelegate.ChoicePrompt.Type.MULTIPLE || choices.isEmpty()) return GeckoResult.fromValue(prompt.dismiss())
         return show(prompt) { complete ->
-            PendingPrompt.Choice(prompt.message.orEmpty(), choices.map { it.label }) { i -> complete(if (i == null) prompt.dismiss() else prompt.confirm(choices[i])) }
+            PendingPrompt.Choice(prompt.message.orEmpty(), choices.map { it.label }) { i -> complete { if (i == null) prompt.dismiss() else prompt.confirm(choices[i]) } }
         }
     }
 
     override fun onRepostConfirmPrompt(session: GeckoSession, prompt: PromptDelegate.RepostConfirmPrompt): GeckoResult<PromptResponse> =
-        show(prompt) { complete -> PendingPrompt.Confirm("Send the form data again?") { ok -> complete(prompt.confirm(if (ok) AllowOrDeny.ALLOW else AllowOrDeny.DENY)) } }
+        show(prompt) { complete -> PendingPrompt.Confirm("Send the form data again?") { ok -> complete { prompt.confirm(if (ok) AllowOrDeny.ALLOW else AllowOrDeny.DENY) } } }
 
     override fun onBeforeUnloadPrompt(session: GeckoSession, prompt: PromptDelegate.BeforeUnloadPrompt): GeckoResult<PromptResponse> =
         GeckoResult.fromValue(prompt.confirm(AllowOrDeny.ALLOW))

@@ -28,7 +28,10 @@ enum class UserAgentProfile(internal val userAgentMode: Int, internal val viewpo
 
 /** Navigation state of a session. [loadCount] increases on every finished page load. */
 data class PageState(
+    /** URL of the document shown (from location changes, so a denied load never shows here). */
     val url: String? = null,
+    /** URL of the most recent load start, which may have been denied. */
+    val loadingUrl: String? = null,
     val title: String = "",
     val loading: Boolean = false,
     val progress: Int = 0,
@@ -84,7 +87,7 @@ class EngineSession internal constructor(
         geckoSession = GeckoSession(settings)
         geckoSession.progressDelegate = object : GeckoSession.ProgressDelegate {
             override fun onPageStart(session: GeckoSession, url: String) {
-                pageFlow.value = pageFlow.value.copy(url = url, loading = true, progress = 0, firstContentfulPaint = false)
+                pageFlow.value = pageFlow.value.copy(loadingUrl = url, loading = true, progress = 0, firstContentfulPaint = false)
             }
 
             override fun onProgressChange(session: GeckoSession, progress: Int) {

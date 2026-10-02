@@ -68,7 +68,7 @@ class CaptureBrowserScreenTest {
     private fun waitFor(what: String, timeoutMs: Long = 30_000, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (!condition()) {
-            if (System.currentTimeMillis() > deadline) throw AssertionError("timed out waiting for $what")
+            if (System.currentTimeMillis() > deadline) throw AssertionError("timed out waiting for $what; page logs ${server.logs(run)} ${server.logs("$run-nav")}")
             Thread.sleep(100)
         }
     }
@@ -92,6 +92,8 @@ class CaptureBrowserScreenTest {
 
     /** Taps the centre of element [id] using the page-reported layout. */
     private fun tap(layout: JSONObject, id: String) {
+        waitFor("no page dialog open") { browser.prompts.pending.value == null }
+        compose.waitForIdle()
         val r = layout.getJSONObject("els").getJSONArray(id)
         val view = geckoView()
         val loc = IntArray(2)
@@ -118,14 +120,16 @@ class CaptureBrowserScreenTest {
             val ic = view.onCreateInputConnection(EditorInfo()) ?: throw AssertionError("no input connection")
             ic.commitText("ime-user@example.test", 1)
         }
-        waitFor("email from the input method") { log(run, "email") == "ime-user@example.test" }
+        // Input events are logged by parallel requests, so they may arrive out of order.
+        waitFor("email from the input method") { ("email" to "ime-user@example.test") in server.logs(run) }
 
-        // Host keyboard path: key events.
+        // Host keyboard path: key events from a keyboard input device, as the emulator window
+        // delivers them.
         tap(layout, "pass")
         Thread.sleep(1_000)
-        instrumentation.sendStringSync("Hw-Pass1")
-        waitFor("password from key events") { log(run, "pass") == "Hw-Pass1" }
-        evidence("C10 text input: email via InputConnection.commitText = ${log(run, "email")}, password via key events = ${log(run, "pass")}")
+        shell("input keyboard text Hw-Pass1")
+        waitFor("password from key events") { ("pass" to "Hw-Pass1") in server.logs(run) }
+        evidence("C10 text input: email via InputConnection.commitText reached the page as 'ime-user@example.test'; password via keyboard key events (input keyboard text) reached it as 'Hw-Pass1'; input events logged: ${server.logs(run).count { it.first != "layout" }}")
 
         waitFor("records") { (browser.recorder.state.value as? CaptureRecorder.State.Recording)?.counters?.records ?: 0 > 0 }
         compose.waitForIdle()
@@ -217,10 +221,10 @@ class CaptureBrowserScreenTest {
         awaitLayout("$run-desktop", 0)
         val mobile = browser.sessions.getValue(CaptureBrowser.Site.MOBILE)
         val desktop = browser.sessions.getValue(CaptureBrowser.Site.DESKTOP)
-        assertTrue(desktop.page.value.url!!.contains("/nav.html"))
+        waitFor("desktop location") { desktop.page.value.url?.contains("/nav.html") == true }
         compose.onNodeWithTag("site-mobile").performClick()
         compose.waitForIdle()
-        assertTrue(mobile.page.value.url!!.contains("/login.html"))
+        waitFor("mobile location") { mobile.page.value.url?.contains("/login.html") == true }
         assertEquals(1, server.requests.count { it.path == "/login.html" })
         val uaMobile = server.requests.first { it.path == "/login.html" }.header("User-Agent")
         val uaDesktop = server.requests.first { it.path == "/nav.html" }.header("User-Agent")

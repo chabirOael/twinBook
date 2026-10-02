@@ -4,14 +4,15 @@ import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -95,27 +96,30 @@ fun CaptureBrowserScreen(browser: CaptureBrowser, onExit: () -> Unit) {
                     }.onFailure { android.util.Log.e(AppEngine.TAG, "capture $action failed", it) }
                 }
             }
-            AndroidView(
-                factory = { context ->
-                    GeckoView(context).also {
-                        it.setAutofillEnabled(false)
-                        it.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-                    }
-                },
-                update = { view ->
-                    if (view.session !== session.geckoSession) {
-                        browser.sessions.values.filter { it !== session }.forEach { if (it.view === view) it.detach() }
-                        session.attach(view)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().weight(1f).testTag("gecko"),
-            )
+            // The page dialog lies over the top of the page, so the page never moves under it.
+            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                AndroidView(
+                    factory = { context ->
+                        GeckoView(context).also {
+                            it.setAutofillEnabled(false)
+                            it.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+                        }
+                    },
+                    update = { view ->
+                        if (view.session !== session.geckoSession) {
+                            browser.sessions.values.filter { it !== session }.forEach { if (it.view === view) it.detach() }
+                            session.attach(view)
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize().testTag("gecko"),
+                )
+                prompt?.let { PromptPanel(it) }
+            }
             DisposableEffect(session) {
                 onDispose { session.detach() }
             }
         }
     }
-    prompt?.let { PromptDialog(it) }
 }
 
 enum class CaptureAction { START, STOP, DISCARD }
@@ -155,47 +159,38 @@ object CaptureText {
     private fun mb(bytes: Long) = "%.1f MB".format(bytes / 1_000_000.0)
 }
 
+/**
+ * A page dialog as a plain panel inside the screen (not a separate dialog window), so it is
+ * answered only by its own buttons.
+ */
 @Composable
-private fun PromptDialog(p: PendingPrompt) {
+private fun PromptPanel(p: PendingPrompt) {
     var text by remember(p) { mutableStateOf((p as? PendingPrompt.Text)?.default.orEmpty()) }
-    val cancel: () -> Unit = when (p) {
-        is PendingPrompt.Alert -> p.ok
-        is PendingPrompt.Confirm -> { { p.answer(false) } }
-        is PendingPrompt.Text -> { { p.answer(null) } }
-        is PendingPrompt.Choice -> { { p.answer(null) } }
-    }
-    AlertDialog(
-        onDismissRequest = cancel,
-        title = { Text("The page says") },
-        text = {
-            Column {
-                Text(p.message, modifier = Modifier.testTag("prompt-message"))
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).testTag("prompt")) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("The page says", style = MaterialTheme.typography.titleSmall)
+            Text(p.message, modifier = Modifier.testTag("prompt-message"))
+            when (p) {
+                is PendingPrompt.Text -> OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("prompt-text"))
+                is PendingPrompt.Choice -> p.labels.forEachIndexed { i, label ->
+                    Text(label, modifier = Modifier.fillMaxWidth().clickable { p.answer(i) }.padding(vertical = 10.dp).testTag("prompt-choice-$i"))
+                }
+                else -> Unit
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (p) {
-                    is PendingPrompt.Text -> OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true, modifier = Modifier.testTag("prompt-text"))
-                    is PendingPrompt.Choice -> p.labels.forEachIndexed { i, label ->
-                        Text(label, modifier = Modifier.fillMaxWidth().clickable { p.answer(i) }.padding(vertical = 10.dp).testTag("prompt-choice-$i"))
+                    is PendingPrompt.Alert -> Button(onClick = p.ok, modifier = Modifier.testTag("prompt-ok")) { Text("OK") }
+                    is PendingPrompt.Confirm -> {
+                        Button(onClick = { p.answer(true) }, modifier = Modifier.testTag("prompt-ok")) { Text("OK") }
+                        OutlinedButton(onClick = { p.answer(false) }, modifier = Modifier.testTag("prompt-cancel")) { Text("Cancel") }
                     }
-                    else -> Unit
+                    is PendingPrompt.Text -> {
+                        Button(onClick = { p.answer(text) }, modifier = Modifier.testTag("prompt-ok")) { Text("OK") }
+                        OutlinedButton(onClick = { p.answer(null) }, modifier = Modifier.testTag("prompt-cancel")) { Text("Cancel") }
+                    }
+                    is PendingPrompt.Choice -> OutlinedButton(onClick = { p.answer(null) }, modifier = Modifier.testTag("prompt-cancel")) { Text("Cancel") }
                 }
             }
-        },
-        confirmButton = {
-            if (p !is PendingPrompt.Choice) {
-                TextButton(
-                    onClick = {
-                        when (p) {
-                            is PendingPrompt.Alert -> p.ok()
-                            is PendingPrompt.Confirm -> p.answer(true)
-                            is PendingPrompt.Text -> p.answer(text)
-                            is PendingPrompt.Choice -> Unit
-                        }
-                    },
-                    modifier = Modifier.testTag("prompt-ok"),
-                ) { Text("OK") }
-            }
-        },
-        dismissButton = {
-            if (p !is PendingPrompt.Alert) TextButton(onClick = cancel, modifier = Modifier.testTag("prompt-cancel")) { Text("Cancel") }
-        },
-    )
+        }
+    }
 }

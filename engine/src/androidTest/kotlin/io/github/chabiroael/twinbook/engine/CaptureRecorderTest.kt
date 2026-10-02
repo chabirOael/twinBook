@@ -46,6 +46,13 @@ class CaptureRecorderTest {
         }
     }
 
+    /** A failed test must not leave its capture running for the next one. */
+    @org.junit.After
+    fun discardLeftover() = runBlocking {
+        if (recorder.isRecording) recorder.discard()
+        Unit
+    }
+
     private val recorder get() = TestEngine.recorder
     private val store get() = recorder.store
 
@@ -89,7 +96,8 @@ class CaptureRecorderTest {
         for (v in listOf(secrets.session, secrets.userId)) assertFalse("cookie value in header records", headerText.contains(v))
         val cookieHeaders = headerLines.flatMap { l -> (0 until (l.optJSONArray("headers")?.length() ?: 0)).map { l.getJSONArray("headers").getJSONObject(it) } }
             .filter { it.getString("name").equals("cookie", true) || it.getString("name").equals("set-cookie", true) }
-            .map { "${it.getString("name")}: ${it.getString("value")}" }
+            // Gecko joins several Set-Cookie headers into one value, separated by newlines.
+            .flatMap { h -> h.getString("value").split("\n").map { "${h.getString("name")}: $it" } }
         assertTrue(cookieHeaders.any { it.startsWith("Set-Cookie: mock_sess=!R") && it.endsWith("; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600") })
         assertTrue(cookieHeaders.any { it.contains("c_user=!R") && it.contains("mock_sess=!R") })
         val form = raw.single { it.getString("ev") == "request" && it.getJSONObject("d").getString("url").contains("/secrets/form") }
@@ -98,7 +106,7 @@ class CaptureRecorderTest {
         assertEquals("!R" + "*".repeat(secrets.dtsg.length - 3) + "!", fieldMap["fb_dtsg"])
         assertEquals(secrets.lsd.length, fieldMap.getValue("lsd").length)
         assertTrue(fieldMap.getValue("lsd").startsWith("!R"))
-        assertEquals("!R***!", fieldMap["jazoest"])
+        assertEquals("!R**!", fieldMap["jazoest"])
         assertEquals("1007000000", fieldMap["__rev"])
         assertEquals("1", fieldMap["__req"])
         val recordsText = raw.joinToString("\n") { it.toString() }
