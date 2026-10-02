@@ -79,9 +79,10 @@ describe("Redactor fields and URLs", () => {
     ];
     const out = r.formFields(fields);
     const map = Object.fromEntries(out);
-    for (const keep of ["av", "__user", "__a", "__req", "__rev", "__s", "__hsi", "__dyn", "__csr", "doc_id"]) expect(map[keep]).toBe(Object.fromEntries(fields)[keep]);
+    for (const keep of ["av", "__user", "__req", "__rev", "__s", "__hsi", "__dyn", "__csr", "doc_id"]) expect(map[keep]).toBe(Object.fromEntries(fields)[keep]);
     expect(map["fb_dtsg"]).toBe(l1Placeholder(TOKEN.length));
     expect(map["jazoest"]).toBe(l1Placeholder(5));
+    expect(map["__a"]).toBe("*");
     expect(map["lsd"]).toBe(l1Placeholder(LSD.length));
     expect(map["variables"]).toBe(JSON.stringify({ id: "1", token: l1Placeholder(19) }));
     expect(out.map(([k]) => k)).toEqual(fields.map(([k]) => k));
@@ -90,6 +91,7 @@ describe("Redactor fields and URLs", () => {
 
   it("redacts query and fragment values of secret keys only", () => {
     const r = new Redactor();
+    expect(r.url("https://m.facebook.com/a/bz?__a=SyntheticOpaqueValue1&__req=1")).toBe(`https://m.facebook.com/a/bz?__a=${l1Placeholder(21)}&__req=1`);
     expect(r.url(`https://m.facebook.com/a?lsd=${LSD}&__rev=12&next=%2F#access_token=XYZ12345`)).toBe(
       `https://m.facebook.com/a?lsd=${l1Placeholder(LSD.length)}&__rev=12&next=%2F#access_token=${l1Placeholder(8)}`,
     );

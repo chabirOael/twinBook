@@ -151,11 +151,12 @@ Rules in `extension/data/redaction-rules.json`, one `why` per entry.
   `key=value` pairs, and in `<input name="key" value="...">` tags.
 
 Secret keys (case-insensitive, exact names): `fb_dtsg`, `fb_dtsg_ag`, `async_get_token`, `lsd`,
-`jazoest`, `token`, `access_token`, `refresh_token`, `id_token`, `oauth_token`, `auth_token`,
+`jazoest`, `__a` (see the rules file: usually `1`, but a long opaque value on one logged-out
+beacon), `token`, `access_token`, `refresh_token`, `id_token`, `oauth_token`, `auth_token`,
 `session_key`, `sessionKey`, `session_token`, `csrf_token`, `csrftoken`, `xsrf_token`, `nonce`,
 `machine_id`, `pass`, `password`, `encpass`, `email`, `contact_point`, `contactpoint`,
 `approvals_code`, `otp`. Shape-only fields stay: `__rev`, `__req`, `__s`, `__hsi`, `__dyn`,
-`__csr`, `__user`, `__a`, `__spin_*`, `av`, `doc_id`, `variables` (its inner keys are scanned).
+`__csr`, `__user`, `__spin_*`, `av`, `doc_id`, `variables` (its inner keys are scanned).
 
 Placeholder: a value of n characters becomes `!R` + `*` × (n − 3) + `!` (n ≥ 3), or `*` × n
 (n < 3). The length is kept, so sizes and offsets stay meaningful. The characters are left
