@@ -375,7 +375,7 @@ records every bridge event from the first one.
    finds the add-on in `extensions.json` with the same version, so `ensureBuiltIn` does
    nothing, yet never starts it. `Engine` detects a bridge that does not connect within 10 s
    (`backgroundStartTimeoutMs`) and calls `installBuiltIn`; the background then starts within
-   about 100 ms. storage.local survived the reinstall in the tests.
+   100 to 200 ms. storage.local survived the reinstall in the tests.
 3. **Messages before delegates.** `WebExtensionController` queues `connectNative` until the app
    calls `setMessageDelegate` (`releasePendingMessages`). Port messages are dispatched to a
    per-port `EventDispatcher` (`port:<id>`); the app sets the port delegate inside
