@@ -122,8 +122,14 @@ class EngineSession internal constructor(
     var navigationPolicy: NavigationPolicy? = null
 
     private val stateFlow = MutableStateFlow<String?>(null)
+    private var lastGoodState: String? = null
+    private var lastGoodUrl: String? = null
 
-    /** Gecko's session state (history and the current page) as JSON, updated as it changes; see [restoreState]. */
+    /**
+     * Gecko's session state (history and the current page) as JSON; see [restoreState]. Updated
+     * after every finished load (the session asks Gecko to flush it then), after [flushState], and
+     * otherwise on Gecko's 10 s session store timer (scrolling, form data).
+     */
     val sessionState: StateFlow<String?> = stateFlow.asStateFlow()
 
     init {
@@ -145,10 +151,19 @@ class EngineSession internal constructor(
             override fun onPageStop(session: GeckoSession, success: Boolean) {
                 val p = pageFlow.value
                 pageFlow.value = p.copy(loading = false, loadCount = p.loadCount + 1, lastLoadSucceeded = success)
+                // Gecko otherwise reports the session state on a 10 s timer (browser.sessionstore.interval).
+                if (session.isOpen) session.flushSessionState()
             }
 
             override fun onSessionStateChange(session: GeckoSession, sessionState: GeckoSession.SessionState) {
-                stateFlow.value = sessionState.toString()
+                val json = sessionState.toString()
+                stateFlow.value = json
+                // A state taken on a web page; the one taken while loading a crash or error page is not.
+                val url = pageFlow.value.url
+                if (url != null && (url.startsWith("https:") || url.startsWith("http:"))) {
+                    lastGoodState = json
+                    lastGoodUrl = url
+                }
             }
         }
         geckoSession.contentDelegate = object : GeckoSession.ContentDelegate {
@@ -219,6 +234,14 @@ class EngineSession internal constructor(
                 return null
             }
         }
+        // The history list is the reliable source for back and forward: after restoreState Gecko
+        // reports the restored history here, while onCanGoBack may not fire again.
+        geckoSession.historyDelegate = object : GeckoSession.HistoryDelegate {
+            override fun onHistoryStateChange(session: GeckoSession, historyList: GeckoSession.HistoryDelegate.HistoryList) {
+                val i = historyList.currentIndex
+                pageFlow.value = pageFlow.value.copy(canGoBack = i > 0, canGoForward = i in 0 until historyList.size - 1)
+            }
+        }
         geckoSession.permissionDelegate = object : GeckoSession.PermissionDelegate {
             override fun onContentPermissionRequest(session: GeckoSession, perm: ContentPermission): GeckoResult<Int> {
                 denied("content permission ${perm.permission}")
@@ -287,21 +310,25 @@ class EngineSession internal constructor(
         geckoSession.goBack()
     }
 
+    /** Asks Gecko to report the session state now ([sessionState] updates shortly after). Main thread only. */
+    fun flushState() {
+        if (geckoSession.isOpen) geckoSession.flushSessionState()
+    }
+
     /**
      * Restores a state saved from [sessionState]: Gecko rebuilds the history and loads its current
      * entry. Returns false if [json] is not a session state. Main thread only.
      */
     fun restoreState(json: String): Boolean {
         val state = runCatching { GeckoSession.SessionState.fromString(json) }.getOrNull() ?: return false
-        if (state.isEmpty()) return false
-        geckoSession.restoreState(state)
-        return true
+        return runCatching { geckoSession.restoreState(state) }.isSuccess
     }
 
     /**
      * After the content process crashed or was killed ([PageState.crashed]) the GeckoSession is
-     * closed. Reopens it and restores the last known state (history and page), or loads
-     * [fallbackUrl] when there is none. Main thread only.
+     * closed. Reopens it and restores the last state taken on a web page (history and page; not
+     * the state of the page that crashed it, which Gecko may have saved last), else loads the last
+     * web page, else [fallbackUrl]. Main thread only.
      */
     fun recover(fallbackUrl: String?) {
         if (!geckoSession.isOpen) {
@@ -310,9 +337,9 @@ class EngineSession internal constructor(
         }
         val p = pageFlow.value
         pageFlow.value = p.copy(crashed = false, recoveries = p.recoveries + 1)
-        val state = stateFlow.value
-        Log.i(Engine.TAG, "session $name: recovering (${if (state != null) "restoring state" else "loading $fallbackUrl"})")
-        if (state == null || !restoreState(state)) fallbackUrl?.let { geckoSession.loadUri(it) }
+        val state = lastGoodState
+        Log.i(Engine.TAG, "session $name: recovering (${if (state != null) "restoring the last web page's state" else "loading a URL"})")
+        if (state == null || !restoreState(state)) (lastGoodUrl ?: fallbackUrl)?.let { geckoSession.loadUri(it) }
     }
 
     /** Main thread only. */

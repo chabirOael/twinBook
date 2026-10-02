@@ -14,7 +14,8 @@ import java.net.URLEncoder
  *   colour scheme it got, `scheme`, on load and on every change).
  * - `GET /shell/ads.html`: an element that a default uBlock Origin cosmetic filter hides
  *   (EasyList `###ad-banner-top` and `##.abovead`), a control element, and an image that a default
- *   list blocks (EasyPrivacy `/__utm.gif`). Reports `cosmetic` (which elements are displayed)
+ *   list blocks (EasyPrivacy `/__utm.gif`). Generic cosmetic filters apply only under
+ *   [NAMED_HOST] (EasyList excepts 127.0.0.1 and localhost with `$generichide`). Reports `cosmetic` (which elements are displayed)
  *   every 250 ms until 4 s after load.
  * - `GET /shell/beacons.html`: sends beacons to the two endpoints shaped like the mobile site's
  *   logging beacons and to a control endpoint, then reports `beacons`.
@@ -38,6 +39,13 @@ object ShellPages {
 
     val LOGGING_PATHS = listOf("/ajax/weblite_load_logging/", "/ajax/weblite_resources_timing_logging/")
     const val CONTROL_LOGGING_PATH = "/ajax/control_logging/"
+
+    /**
+     * Name under which the app's debug build reaches the mock on the loopback interface. EasyList
+     * turns generic cosmetic filters off for 127.0.0.1 and localhost, so element hiding is tested
+     * under this name.
+     */
+    const val NAMED_HOST = "mock.twinbook.test"
 
     private val GIF = byteArrayOf(
         0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80.toByte(), 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -67,8 +75,8 @@ object ShellPages {
     private const val STYLE = """<meta name="viewport" content="width=device-width, initial-scale=1"><style>
 :root { color-scheme: light dark; }
 body { font: 18px sans-serif; margin: 0; padding: 8px; }
-a.big, button, textarea { display: block; box-sizing: border-box; width: 100%; min-height: 56px; margin: 0 0 8px; font-size: 18px; }
-a.big { line-height: 56px; background: #eef; color: #003; text-align: center; text-decoration: none; }
+a.big, button, textarea { display: block; box-sizing: border-box; width: 100%; min-height: 48px; margin: 0 0 6px; font-size: 18px; }
+a.big { line-height: 48px; background: #eef; color: #003; text-align: center; text-decoration: none; }
 .box { height: 60px; margin: 6px 0; background: #fcc; }
 </style>"""
 
@@ -79,7 +87,11 @@ function log(field, value) {
   xhr.open("POST", "/log?run=" + encodeURIComponent(run) + "&field=" + encodeURIComponent(field));
   xhr.send(String(value));
 }
+var layoutIds = null;
+// Reported again whenever the viewport changes (a page can load before its view has a size).
+window.addEventListener("resize", function () { if (layoutIds) layout(layoutIds); });
 function layout(ids) {
+  layoutIds = ids;
   var r = { dpr: window.devicePixelRatio, vw: window.innerWidth, vh: window.innerHeight, els: {} };
   ids.forEach(function (id) {
     var b = document.getElementById(id).getBoundingClientRect();
@@ -108,8 +120,12 @@ window.addEventListener("load", function () { $onLoad });
 <a class="big" id="geo" href="geo:25.28,51.53">map</a>
 <a class="big internal" id="long" href="/shell/long.html">long page</a>
 <a class="big internal" id="form" href="/shell/form.html">form</a>
-<a class="big internal" id="dark" href="/shell/dark.html">dark</a>""",
-        """layout(["feed", "outbound", "direct", "newwin", "tel", "mailto", "geo", "long", "form", "dark"]); log("loaded", "home");""",
+<a class="big internal" id="dark" href="/shell/dark.html">dark</a>
+<a class="big internal" id="ads" href="/shell/ads.html">ads</a>
+<a class="big internal" id="beacons" href="/shell/beacons.html">beacons</a>
+<a class="big" id="adsnamed" href="/shell/ads.html">ads under the mock's host name</a>""",
+        """document.getElementById("adsnamed").href = "http://$NAMED_HOST:" + location.port + "/shell/ads.html";
+layout(["feed", "outbound", "direct", "newwin", "tel", "mailto", "geo", "long", "form", "dark", "ads", "beacons", "adsnamed"]); log("loaded", "home");""",
     )
 
     val LONG: String = page(

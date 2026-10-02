@@ -75,7 +75,7 @@ fun ShellScreen(shell: Shell, developerScreens: Boolean, onSettings: () -> Unit,
 
     Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).testTag("shell")) {
         Box(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            GeckoViewFor(shell.session, Modifier.fillMaxSize().testTag("shell-gecko"))
+            GeckoViewFor(shell.session, Modifier.fillMaxSize().testTag("shell-gecko"), onLaidOut = shell::viewLaidOut)
             LoadingBar(page.loading && shown, page.progress)
             prompt?.let { Box(Modifier.align(Alignment.TopCenter)) { PromptPanel(it) } }
             if (page.crashed) RecoveryView { shell.recover() }
@@ -87,12 +87,13 @@ fun ShellScreen(shell: Shell, developerScreens: Boolean, onSettings: () -> Unit,
 
 /** Shows [session] in a GeckoView; the session outlives the view (rotation, screen changes). */
 @Composable
-fun GeckoViewFor(session: EngineSession, modifier: Modifier) {
+fun GeckoViewFor(session: EngineSession, modifier: Modifier, onLaidOut: () -> Unit = {}) {
     AndroidView(
         factory = { context ->
             GeckoView(context).also {
                 it.setAutofillEnabled(false)
                 it.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+                it.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> if (v.width > 0 && v.height > 0) onLaidOut() }
             }
         },
         update = { view -> if (view.session !== session.geckoSession) session.attach(view) },
@@ -257,12 +258,20 @@ fun DashboardScreen(shell: Shell, onClose: () -> Unit) {
                     NavigationDecision.Allow
                 }
             }
-            shell.engine.blockerWebExtension?.metaData?.optionsPageUrl?.let { s.load(it) }
+            val meta = shell.engine.blockerWebExtension?.metaData
+            val url = DevOverrides.dashboardPage?.let { page -> meta?.baseUrl?.let { it + page } } ?: meta?.optionsPageUrl
+            url?.let { s.load(it) }
         }
     }
     val page by session.page.collectAsState()
     BackHandler { if (page.canGoBack) session.goBack() else onClose() }
-    DisposableEffect(session) { onDispose { session.close() } }
+    DisposableEffect(session) {
+        shell.dashboardSession = session
+        onDispose {
+            if (shell.dashboardSession === session) shell.dashboardSession = null
+            session.close()
+        }
+    }
     Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).windowInsetsPadding(WindowInsets.safeDrawing).testTag("dashboard")) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onClose, modifier = Modifier.testTag("dashboard-close")) { Text("← Back") }

@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -35,12 +36,20 @@ data class ShellConfig(val siteId: String, val rules: LinkRules) {
     companion object {
         fun realSite(): ShellConfig = ShellConfig("site", LinkRules.forSite())
 
-        /** The test mock at [origin] (`http://127.0.0.1:<port>`): its pages under /shell/, its redirect page at /l.php. */
-        fun mock(origin: String): ShellConfig = ShellConfig(
+        /**
+         * The test mock at [origin] (`http://127.0.0.1:<port>`): its pages under /shell/, its redirect
+         * page at /l.php. Its hosts are 127.0.0.1 and, in debug builds, [AppEngine.MOCK_HOST].
+         */
+        const val MOCK_START = "/shell/home.html"
+
+        fun mock(origin: String, startPath: String = MOCK_START): ShellConfig = ShellConfig(
             "mock:$origin",
             LinkRules.withSite(
-                SiteHosts(listOf(OwnHost("127.0.0.1", subdomains = false)), listOf(RedirectRule(setOf("127.0.0.1"), "/l.php", "u"))),
-                "$origin/shell/home.html",
+                SiteHosts(
+                    listOf(OwnHost("127.0.0.1", subdomains = false), OwnHost(AppEngine.MOCK_HOST, subdomains = false)),
+                    listOf(RedirectRule(setOf("127.0.0.1", AppEngine.MOCK_HOST), "/l.php", "u")),
+                ),
+                origin + startPath,
             ),
         )
     }
@@ -110,13 +119,21 @@ class Shell private constructor(context: Context, val config: ShellConfig, val o
     private val shownFlow = MutableStateFlow(false)
     val shown: StateFlow<Boolean> = shownFlow.asStateFlow()
 
+    private val viewReadyFlow = MutableStateFlow(false)
+
+    /** The screen calls this once its GeckoView has a size: a page loaded before that lays out at width 0. */
+    fun viewLaidOut() {
+        if (!viewReadyFlow.value) Log.i(AppEngine.TAG, "shell: view laid out")
+        viewReadyFlow.value = true
+    }
+
     init {
         session.promptDelegate = prompts
         session.navigationPolicy = io.github.chabiroael.twinbook.engine.NavigationPolicy { decide(it) }
         engine.scope.launch { start() }
         engine.scope.launch {
             // Gecko reports the session state after every navigation and scroll; keep the latest on disk.
-            session.sessionState.filterNotNull().debounce(SAVE_DEBOUNCE_MS).collect { store.save(config.siteId, it) }
+            session.sessionState.filterNotNull().debounce(SAVE_DEBOUNCE_MS).collect { if (savable(it)) store.save(config.siteId, it) }
         }
         engine.scope.launch {
             session.page.collect { p ->
@@ -127,6 +144,13 @@ class Shell private constructor(context: Context, val config: ShellConfig, val o
             }
         }
     }
+
+    /** True once the saved state was restored or the start page requested; states before that are the new session's about:blank. */
+    @Volatile
+    private var started = false
+
+    /** Only states taken after start that hold at least one web page are saved. */
+    private fun savable(state: String): Boolean = started && SessionStateStore.hasWebPage(state)
 
     private suspend fun start() {
         val ready = try {
@@ -141,12 +165,14 @@ class Shell private constructor(context: Context, val config: ShellConfig, val o
         val t = engine.timings.value
         logTiming("shell engine ready (twin-bridge ${t.bridgeConnectedElapsed - t.processStartElapsed} ms, blocker ${if (t.blockerReadyElapsed > 0) "${t.blockerReadyElapsed - t.processStartElapsed} ms, ${t.blockerProbes} probes, ${t.blockerProbesPassed} passed" else ready.blocker}, mode ${t.startupMode})", null)
         phaseFlow.value = Phase.Ready
+        viewReadyFlow.first { it }
         val saved = store.load(config.siteId)
         if (saved != null && session.restoreState(saved)) {
-            Log.i(AppEngine.TAG, "shell: restored the saved session state (${saved.length} chars)")
+            Log.i(AppEngine.TAG, "shell: restored the saved session state (${SessionStateStore.entryCount(saved)} history entries)")
         } else {
             session.load(config.startUrl)
         }
+        started = true
     }
 
     private fun logTiming(what: String, url: String?) {
@@ -180,6 +206,10 @@ class Shell private constructor(context: Context, val config: ShellConfig, val o
         }
     }
 
+    /** The uBlock Origin dashboard's session while that screen is open (tests read it). */
+    @Volatile
+    var dashboardSession: EngineSession? = null
+
     fun back() = session.goBack()
 
     fun reload() = session.reload()
@@ -191,7 +221,9 @@ class Shell private constructor(context: Context, val config: ShellConfig, val o
 
     /** Writes the current session state now (the activity calls this when it stops). */
     fun saveNow() {
-        session.sessionState.value?.let { store.save(config.siteId, it) }
+        session.sessionState.value?.let { if (savable(it)) store.save(config.siteId, it) }
+        // And ask Gecko for the latest state (scroll position, form data); it is saved when it arrives.
+        session.flushState()
     }
 
     /** Ad hiding on or off: uBlock Origin is enabled or disabled (not reinstalled), then the page reloads. */
@@ -245,6 +277,18 @@ class SessionStateStore(private val file: File) {
             if (!tmp.renameTo(file)) Log.w(AppEngine.TAG, "shell: could not replace ${file.name}")
         } catch (e: Exception) {
             Log.w(AppEngine.TAG, "shell: state not saved: ${e.message}")
+        }
+    }
+
+    companion object {
+        private fun entries(state: String) = runCatching { JSONObject(state).optJSONObject("history")?.optJSONArray("entries") }.getOrNull()
+
+        fun entryCount(state: String): Int = entries(state)?.length() ?: 0
+
+        /** True if the state's history holds an http(s) page (not only about:blank). */
+        fun hasWebPage(state: String): Boolean {
+            val list = entries(state) ?: return false
+            return (0 until list.length()).any { list.optJSONObject(it)?.optString("url").orEmpty().let { u -> u.startsWith("http:") || u.startsWith("https:") } }
         }
     }
 
