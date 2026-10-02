@@ -339,7 +339,8 @@ class ShellScreenTest {
         waitFor("options page loaded", 30_000) { shell.dashboardSession?.page?.value?.let { it.url?.startsWith(ext.metaData.optionsPageUrl!!) == true && !it.loading } == true }
         screenshot("twinbook-s7-dashboard")
         evidence("S7 dashboard entry opened ${shell.dashboardSession?.page?.value?.url} (options page ${ext.metaData.optionsPageUrl})")
-        pressBack()
+        // Back moves within the dashboard's own tabs; its Back button closes it.
+        compose.onNodeWithTag("dashboard-close").performClick()
         compose.onNodeWithTag("settings").assertIsDisplayed()
 
         // uBlock Origin's support page names the browser family it detected in its
@@ -348,8 +349,15 @@ class ShellScreenTest {
         // opened through the dashboard screen.
         DevOverrides.dashboardPage = "support.html"
         try {
-            compose.onNodeWithTag("setting-dashboard").performClick()
-            waitFor("support page", 30_000) { shell.dashboardSession?.page?.value?.let { it.url?.endsWith("support.html") == true && !it.loading } == true }
+            compose.waitForIdle()
+            compose.onNodeWithTag("setting-dashboard").assertIsDisplayed().performClick()
+            compose.waitForIdle()
+            compose.onNodeWithTag("dashboard").assertIsDisplayed()
+            try {
+                waitFor("support page", 30_000) { shell.dashboardSession?.page?.value?.let { it.url?.contains("support.html") == true && !it.loading } == true }
+            } catch (e: AssertionError) {
+                throw AssertionError("${e.message}; dashboard session: ${shell.dashboardSession?.page?.value}")
+            }
             var total = 0
             waitFor("troubleshooting information names the environment", 30_000) {
                 val s = shell.dashboardSession ?: return@waitFor false
@@ -362,7 +370,7 @@ class ShellScreenTest {
         } finally {
             DevOverrides.dashboardPage = null
         }
-        pressBack()
+        compose.onNodeWithTag("dashboard-close").performClick()
     }
 
     @Test
