@@ -11,7 +11,8 @@
 // Outgoing events and requests are queued until the app has answered hello with welcome, so
 // nothing is lost when the extension starts before the app listens. If the port disconnects,
 // requests already sent on it fail with code "disconnected", unsent messages stay queued and
-// the client reconnects with backoff.
+// the client reconnects with backoff. hello is re-sent on the same port until welcome arrives,
+// because a message posted before the app has attached its port listener can be lost.
 
 export const PROTOCOL_VERSION = 1;
 
@@ -48,6 +49,9 @@ export interface BridgeClientOptions {
   hello: () => Record<string, unknown>;
   requestTimeoutMs?: number;
   reconnectDelaysMs?: readonly number[];
+  /** Interval for re-sending hello until welcome; after helloAttempts the port is replaced. */
+  helloRetryMs?: number;
+  helloAttempts?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
   log?: (message: string) => void;
@@ -80,6 +84,8 @@ export class BridgeClient {
     this.options = {
       requestTimeoutMs: 30_000,
       reconnectDelaysMs: [100, 250, 500, 1000, 2000, 5000],
+      helloRetryMs: 500,
+      helloAttempts: 20,
       setTimer: (fn, ms) => setTimeout(fn, ms),
       clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
       ...options,
@@ -165,12 +171,29 @@ export class BridgeClient {
     port.onDisconnect.addListener(() => {
       if (this.port === port) this.lost(port);
     });
+    this.sendHello(port, 1);
+  }
+
+  private sendHello(port: PortLike, attempt: number): void {
+    if (this.port !== port || this.stateValue === "ready") return;
+    if (attempt > this.options.helloAttempts) {
+      this.log("no welcome; replacing the port");
+      try {
+        port.disconnect();
+      } catch {
+        // already gone
+      }
+      this.lost(port);
+      return;
+    }
     try {
       port.postMessage({ type: "hello", protocol: PROTOCOL_VERSION, extension: this.options.hello() });
     } catch (e) {
       this.log(`hello failed: ${String(e)}`);
       this.lost(port);
+      return;
     }
+    this.options.setTimer(() => this.sendHello(port, attempt + 1), this.options.helloRetryMs);
   }
 
   private lost(port: PortLike): void {

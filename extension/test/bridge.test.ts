@@ -86,6 +86,27 @@ describe("BridgeClient", () => {
     ]);
   });
 
+  it("re-sends hello until welcome, then stops", () => {
+    const { client, ports, timers } = setup();
+    client.start();
+    timers.advance(500);
+    timers.advance(500);
+    expect(ports[0]!.sent.filter((m) => m["type"] === "hello")).toHaveLength(3);
+    ports[0]!.deliver({ type: "welcome" });
+    timers.advance(5000);
+    expect(ports[0]!.sent.filter((m) => m["type"] === "hello")).toHaveLength(3);
+  });
+
+  it("replaces a port that never answers hello", () => {
+    const { client, ports, timers } = setup();
+    client.start();
+    for (let i = 0; i < 21; i++) timers.advance(500);
+    expect(ports[0]!.disconnected).toBe(true);
+    timers.advance(20);
+    expect(ports).toHaveLength(2);
+    expect(client.state).toBe("connecting");
+  });
+
   it("correlates responses to requests, also out of order", async () => {
     const { client, ports } = setup();
     client.start();
@@ -157,9 +178,9 @@ describe("BridgeClient", () => {
     client.emit("while-down", {});
     timers.advance(10);
     expect(ports).toHaveLength(2);
-    expect(ports[1]!.sent).toEqual([{ type: "hello", protocol: 1, extension: { version: "1.2.3" } }]);
+    expect(ports[1]!.sent[0]).toEqual({ type: "hello", protocol: 1, extension: { version: "1.2.3" } });
     ports[1]!.deliver({ type: "welcome" });
-    expect(ports[1]!.sent[1]).toEqual({ type: "event", name: "while-down", data: {} });
+    expect(ports[1]!.sent.find((m) => m["type"] === "event")).toEqual({ type: "event", name: "while-down", data: {} });
   });
 
   it("retries when connecting throws", () => {
