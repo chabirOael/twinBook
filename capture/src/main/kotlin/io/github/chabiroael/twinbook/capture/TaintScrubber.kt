@@ -16,11 +16,15 @@ package io.github.chabiroael.twinbook.capture
  *    are skipped. If two values share a variant, the first value's label wins.
  * 3. Data is scanned as bytes from left to right; at each position the longest matching variant
  *    is replaced by `!T:<label>!` and the scan continues after it.
+ * 4. A match that is a whole JSON number (the value is a number literal, the nearest non-blank
+ *    byte before it is `:`, `,` or `[`, and after it `,`, `]` or `}`) is replaced by the
+ *    placeholder as a JSON string, so the document stays valid JSON. The quotes are escaped for
+ *    the depth of JSON-in-a-string the match sits at (see [quoteAt]).
  *
  * Secret values live only in memory: in this object while it exists, never on disk.
  */
 class TaintScrubber(secrets: List<Secret>, private val options: TaintOptions = TaintOptions()) {
-    private class Pattern(val bytes: ByteArray, val label: String, val placeholder: ByteArray)
+    private class Pattern(val bytes: ByteArray, val label: String, val placeholder: ByteArray, val numeric: Boolean)
 
     /** Patterns by their first byte, longest first. */
     private val byFirst = arrayOfNulls<Array<Pattern>>(256)
@@ -44,7 +48,7 @@ class TaintScrubber(secrets: List<Secret>, private val options: TaintOptions = T
                 val bytes = v.toByteArray(Charsets.UTF_8)
                 val key = String(bytes, Charsets.ISO_8859_1)
                 if (bytes.size < options.minLength || !seen.add(key)) continue
-                lists.getOrPut(bytes[0].toInt() and 0xff) { mutableListOf() } += Pattern(bytes, label, placeholder)
+                lists.getOrPut(bytes[0].toInt() and 0xff) { mutableListOf() } += Pattern(bytes, label, placeholder, NUMBER_LITERAL.matches(v))
             }
         }
         for ((first, list) in lists) byFirst[first] = list.sortedByDescending { it.bytes.size }.toTypedArray()
@@ -71,7 +75,10 @@ class TaintScrubber(secrets: List<Secret>, private val options: TaintOptions = T
             }
             val o = out ?: java.io.ByteArrayOutputStream(data.size).also { out = it }
             o.write(data, last, i - last)
+            val quote = if (hit.numeric) quoteAt(data, i, i + hit.bytes.size) else null
+            if (quote != null) o.write(quote)
             o.write(hit.placeholder)
+            if (quote != null) o.write(quote)
             counts[hit.label] = (counts[hit.label] ?: 0) + 1
             i += hit.bytes.size
             last = i
@@ -102,6 +109,53 @@ class TaintScrubber(secrets: List<Secret>, private val options: TaintOptions = T
 
     companion object {
         private val PLACEHOLDER = Regex("""^(?:!R\**!|\*{1,2})$""")
+        private val NUMBER_LITERAL = Regex("""^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$""")
+
+        private fun isBlank(b: Byte): Boolean = b == ' '.code.toByte() || b == '\t'.code.toByte() || b == '\n'.code.toByte() || b == '\r'.code.toByte()
+
+        /**
+         * The quote (as bytes) to put around the placeholder that replaces the match at
+         * [start, end), or null if the match is not a whole JSON number.
+         *
+         * Depth: JSON inside a JSON string writes its quotes as `\"`, inside that as `\\\"`, and
+         * so on. The nearest quote before the match belongs to the match's own level (a key, or the
+         * end of the previous string). With b backslashes before that quote, the level is the
+         * number of trailing zero bits of b + 1 (an escaped backslash before a closing quote adds
+         * pairs). A quote followed by `[` or `{` opens a string that holds JSON: one level deeper.
+         * A quote followed by anything else but `:`, `,`, `]` or `}` opens a plain string, so the
+         * match is text inside it.
+         */
+        fun quoteAt(data: ByteArray, start: Int, end: Int): ByteArray? {
+            var j = start - 1
+            while (j >= 0 && isBlank(data[j])) j--
+            if (j < 0 || data[j].toInt().toChar() !in ":,[") return null
+            var k = end
+            while (k < data.size && isBlank(data[k])) k++
+            if (k >= data.size || data[k].toInt().toChar() !in ",]}") return null
+            var q = j
+            while (q >= 0 && data[q] != '"'.code.toByte()) q--
+            var depth = 0
+            if (q >= 0) {
+                var b = 0
+                while (q - b - 1 >= 0 && data[q - b - 1] == '\\'.code.toByte()) b++
+                var n = b + 1
+                while (n % 2 == 0) {
+                    depth++
+                    n /= 2
+                }
+                var a = q + 1
+                while (a < data.size && isBlank(data[a])) a++
+                val next = if (a < data.size) data[a].toInt().toChar() else ' '
+                if (next == '[' || next == '{') {
+                    depth++
+                } else if (next !in ":,]}") {
+                    // A quote not followed by `:`, `,`, `]` or `}` opens a string the match lies
+                    // in (a list such as "a,<id>,b"): not a number.
+                    return null
+                }
+            }
+            return ("\\".repeat((1 shl minOf(depth, 6)) - 1) + "\"").toByteArray(Charsets.US_ASCII)
+        }
 
         fun isPlaceholder(value: String): Boolean = PLACEHOLDER.matches(value)
 

@@ -66,7 +66,11 @@ as service-worker fetches), `frameId`, `parentFrameId`, `frameAncestors`, `docum
 `body.kind`:
 
 - `formData`: `fields`, the parsed form fields in order as `[name, value]` pairs, duplicates
-  kept, layer 1 applied. This is what form posts and the site's async POSTs produce.
+  kept, layer 1 applied. This is what form posts and the site's async POSTs produce. A body
+  part without `=` (Gecko's parser gives it no value) is recorded as `[name, null]`; before
+  M2b it made layer 1 throw and the whole request line was lost (two `/ajax/route-definition/`
+  posts in the owner's first desktop capture). If computing a line's headers or body ever
+  throws again, the line is still written, with `extraError` instead of the failed part.
 - `raw`: `text` of a non-form body (JSON, text) up to 256 KiB, layer 1 applied; `bytes` total
   size; `truncated`.
 - `binary`: `bytes` only. `error`, `none`.
@@ -150,13 +154,17 @@ Rules in `extension/data/redaction-rules.json`, one `why` per entry.
   (`"token":"..."`, `\"token\":\"...\"`), in JavaScript literals (`token:'...'`), in
   `key=value` pairs, and in `<input name="key" value="...">` tags.
 
-Secret keys (case-insensitive, exact names): `fb_dtsg`, `fb_dtsg_ag`, `async_get_token`, `lsd`,
-`jazoest`, `__a` (see the rules file: usually `1`, but a long opaque value on one logged-out
-beacon), `token`, `access_token`, `refresh_token`, `id_token`, `oauth_token`, `auth_token`,
-`session_key`, `sessionKey`, `session_token`, `csrf_token`, `csrftoken`, `xsrf_token`, `nonce`,
-`machine_id`, `pass`, `password`, `encpass`, `email`, `contact_point`, `contactpoint`,
-`approvals_code`, `otp`. Shape-only fields stay: `__rev`, `__req`, `__s`, `__hsi`, `__dyn`,
-`__csr`, `__user`, `__spin_*`, `av`, `doc_id`, `variables` (its inner keys are scanned).
+Secret keys (case-insensitive, exact names; 76 since rules version 5): `fb_dtsg`, `fb_dtsg_ag`,
+`async_get_token`, `lsd`, `jazoest`, `__a`, `token`, the OAuth and session token names in
+snake and camel case (`access_token`, `accessToken`, `sessionToken` …), `csrf`, `xsrf`, `dtsg`,
+`nonce`, `ServerNonce`, `machine_id`, device ids (`device_id`, `deviceId`, `x-dgw-deviceid` …),
+logout and link-shim hashes, the messaging client's `accountKey`, `userKeyBase`,
+`encrypted_serialized_cat`, `encrypted`, `secret`, the string values of `data` (anonymous
+credentials of the messaging worker), and the login fields (`pass`, `password`, `encpass`,
+`email`, `contact_point`, `approvals_code`, `otp`). The list and the reason for each key are in
+the rules file; docs/findings/payloads.md (appendix) explains the additions of M2b. Shape-only
+fields stay: `__rev`, `__req`, `__s`, `__hsi`, `__dyn`, `__csr`, `__user`, `__spin_*`, `av`,
+`doc_id`, `variables` (its inner keys are scanned).
 
 Placeholder: a value of n characters becomes `!R` + `*` × (n − 3) + `!` (n ≥ 3), or `*` × n
 (n < 3). The length is kept, so sizes and offsets stay meaningful. The characters are left
@@ -186,14 +194,69 @@ finalize; they are never written to disk or logged.
 - Bytes are scanned left to right; at each position the longest matching variant is replaced
   by `!T:<label>!`, for example `!T:cookie:c_user!`. The first value's label wins when two
   values share a variant. Labels contain only `[A-Za-z0-9_.:-]`.
+- A match that is a whole JSON number is replaced by the placeholder as a JSON string, so the
+  document stays valid JSON (see "Secrets that are JSON numbers" below).
 
-The same algorithm runs in TypeScript for the HAR importer (`extension/src/lib/taint.ts`).
+The same algorithm runs in TypeScript for the HAR importer and the offline re-scrub
+(`extension/src/lib/taint.ts`).
 Both implementations run the shared vectors `extension/test/vectors/taint.json` (Vitest and
 the `:capture` JVM test).
 
 Known over-redaction: any non-secret cookie value of 8 characters or more (for example a
 window size like `1280x720`) is scrubbed wherever it appears. Placeholders name their label,
 so M2b can tell.
+
+### Secrets that are JSON numbers
+
+Layer 2 replaces bytes. The site also sends the viewer's id (the `c_user` cookie value) as a
+bare JSON number (`"userID":<digits>`, array elements, a map keyed by the id). Up to M2b the
+placeholder then stood unquoted, `"userID":!T:cookie:c_user!`, which is not valid JSON.
+
+Since M2c both implementations write it as a JSON string where the match is a whole JSON
+number: the value is a number literal, the nearest non-blank byte before it is `:`, `,` or
+`[`, the nearest after it is `,`, `]` or `}`, and the nearest quote before it is not the
+opening quote of a plain string (that would make it text such as a list `"a,<id>,b"`). The
+quotes are escaped for the depth at which the number sits in JSON-inside-a-string: `"` at the
+top level, `\"` inside a JSON string, `\\\"` one level deeper. Example:
+`{"userID":"!T:cookie:c_user!"}` and, inside a request's `variables`,
+`"{\"actorID\":\"!T:cookie:c_user!\"}"`. The label is kept; the type changes from number to
+string. Everywhere else the placeholder is written as before.
+
+Sessions finalized before this change still hold bare placeholders. The offline tools read
+both: `repairBare` (`extension/tools/findings/session.ts`) turns a bare placeholder in a
+number position into `0` before parsing, and the `findings` tool reports how many it repaired
+per session, each place counted once. In the owner's recordings that regex matches 65 places
+in `20261002-172927-site` and 68 in `20261002-183314-site`. Only 4 and 19 of them (and 1 in
+`20261002-181317-site`) are real numbers. The others lie inside string values, where the
+document was valid JSON already. M2b's figure of 765 counted the same places once per parse.
+
+### Re-scrubbing a pulled session with newer rules
+
+`tools/capture-tools.sh rescrub captures/<id>` re-applies layer 1 with the current rules to every
+line and body of a pulled session, then layer 2 with every value found, verifies, and writes a
+new finalized session `captures/<id>-rescrub` (with a `rescrub` section in session.json: source
+id, rules version and hash, layer 1 and 2 counts, labels). The original is only read.
+`--replace` rebuilds an existing copy. `tools/capture-tools.sh scan` lists keys whose values are
+long, opaque and recur, credential-like key names, and long unredacted strings below
+credential-like keys, with names, lengths and counts only.
+
+### Which pulled sessions may be deleted
+
+Every tool that M2b and later milestones use reads the `-rescrub` copies only: `findings`,
+`fixtures`, `keypaths`, `leakscan --raw` and the fixture leak test (which uses an original
+too while it exists, see fixtures/README.md). An original differs from its copy only where a
+secret was replaced, and some originals still hold values the first rules did not cover. On
+the development machine, as of M2c:
+
+| Directory under `captures/` | May be deleted? |
+|---|---|
+| `20261002-172602-site`, `20261002-172927-site`, `20261002-181317-site`, `20261002-183314-site` | yes, once the matching `-rescrub` copy exists and is finalized |
+| the four `…-rescrub` copies | no: the fixtures, the leak test and the findings are built from them |
+| `20261002-110721-site`, `20261002-111209-site` (M2a, first rules, no copy) | yes; no tool uses them. Re-scrub them first if they are to be kept |
+| `…-mock`, `probe-finalized-…` | yes; mock data only |
+
+Deleting an original has one cost: `rescrub` refuses a `-rescrub` copy as its input, so
+rules added later can no longer be applied to that session offline.
 
 ## 6. Filter modes and the probe
 
@@ -210,6 +273,14 @@ inside, with counts. The names are in `extension/data/probe-keys.json`: `sponsor
 `ad_id`, `is_sponsored`, `client_token`. At most 400 reports per response are kept
 (`probe.documents` counts all). The `observe` line also carries the core's `stats`
 (`bytesIn`, `bytesOut` equal in observe mode, `documents`, `kept`, `failedOpen` ...).
+
+### Long-lived connections
+
+WebSocket handshakes are recorded like any request (`d.type` `websocket`, `request`,
+`sendHeaders`, `headers`, `completed`); their frames are not visible to webRequest and are never
+recorded. Over HTTP/2 the handshake reports status 200, over HTTP/1.1 status 101. Service-worker
+scripts are recorded as `script` requests without a tab. `tools/capture-summary.mjs` lists both
+under "Long-lived connections".
 
 ## 7. Transport and limits
 

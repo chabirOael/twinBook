@@ -9,6 +9,18 @@ interface Vector {
   input: string;
   output: string;
   counts: Record<string, number>;
+  validJson?: boolean;
+}
+
+/** Parses `text` as JSON, and every string inside it that starts like JSON, recursively. */
+function parseDeep(text: string): void {
+  const visit = (v: unknown): void => {
+    if (typeof v === "string") {
+      if (/^[[{]/.test(v)) parseDeep(v);
+    } else if (Array.isArray(v)) v.forEach(visit);
+    else if (typeof v === "object" && v !== null) Object.values(v).forEach(visit);
+  };
+  visit(JSON.parse(text));
 }
 
 const vectors = JSON.parse(readFileSync(new URL("./vectors/taint.json", import.meta.url), "utf8")) as { minTaintLength: number; stopList: string[]; cases: Vector[] };
@@ -29,6 +41,10 @@ describe("taint vectors (shared with the Kotlin finalize pass)", () => {
       expect(fromUtf8.decode(latin1ToBytes(result.text))).toBe(v.output);
       expect(result.counts).toEqual(v.counts);
       expect(scrubber.countHits(result.text)).toBe(0);
+      if (v.validJson === true) {
+        expect(() => parseDeep(v.input)).not.toThrow();
+        expect(() => parseDeep(v.output)).not.toThrow();
+      }
     });
   }
 });

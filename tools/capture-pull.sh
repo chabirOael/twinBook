@@ -9,6 +9,8 @@
 # file) is refused: it may still contain secrets that layer 2 never scrubbed.
 #
 # By default it reads the login-safe `daily` app. --debug reads the debug app instead (tests).
+# The device is ANDROID_SERIAL (an emulator or a real phone over USB or wireless debugging,
+# as listed by `adb devices`); without it, the emulator of tools/emulator-start.sh.
 # Works through `run-as`, which both builds allow because they are debuggable. Never deletes
 # anything on the device.
 set -euo pipefail
@@ -22,7 +24,7 @@ cmd="${1:-list}"
 OUT="${TWINBOOK_ROOT}/captures"
 
 if ! adb get-state > /dev/null 2>&1; then
-  echo "error: device ${ANDROID_SERIAL} not connected. Start it with tools/emulator-start.sh" >&2
+  echo "error: device ${ANDROID_SERIAL} not connected. Start the emulator with tools/emulator-start.sh, or set ANDROID_SERIAL to a phone listed by 'adb devices'" >&2
   exit 1
 fi
 

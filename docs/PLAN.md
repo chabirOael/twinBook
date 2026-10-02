@@ -1,6 +1,6 @@
 # twinBook master plan
 
-Status: M2a merged, owner's first capture done 2026-10-02. M2b prompt issued 2026-10-02.
+Status: M2b and its fix-up M2c accepted 2026-10-02. M3a prompt issued. Waiting for the owner's pull request.
 
 This file is the single source of truth for the project. The planner (Claude, in the
 planning conversation) owns it and updates it after every milestone report. Build
@@ -25,7 +25,7 @@ native-feeling UI.
 |---|---|---|
 | A1 | Engine is GeckoView (Firefox's engine), used directly. Mozilla Android Components modules are pulled in only where they save real work. | Only Android engine with response-stream rewriting from a WebExtension. WebView and Brave cannot do it. |
 | A2 | Native screens are fed by Comet GraphQL (www.facebook.com, desktop user agent, hidden session). | Domain-level JSON. The mobile site is a Bloks presentation tree with no post semantics. |
-| A3 | Long-tail screens use the Bloks mobile site (m.facebook.com) in a visible web session. | Covers everything with no per-feature work. |
+| A3 | Long-tail screens use the mobile site (m.facebook.com) in a visible web session. Revised after M2b: logged in, that site is a "web lite" client fed through a WebSocket, so its ads can only be hidden cosmetically, by uBlock Origin's mobile filters. | Covers everything with no per-feature work. |
 | A4 | License GPLv3, uBlock Origin bundled as a built-in extension. | Maintained filter lists for free. |
 | A5 | v1 native scope: feed, video and Reels, notifications, profile and page view, search. Messages, marketplace, groups admin, settings, composer are web fallback. | Daily paths first. |
 | A6 | Distribution through GitHub releases and F-Droid, not Google Play. | Meta terms and Play policy. |
@@ -85,7 +85,18 @@ native-feeling UI.
   about 3 MB. The app's own main thread was waiting on the render thread, so this was
   resource exhaustion, not an application deadlock. Heavy desktop pages must not be
   loaded on the emulator under capture. The owner offered a real phone for recording.
-- Not yet verified: logged-in payload shapes; whether `/api/graphql/` responses and
+- Established by M2b from the owner's recordings (docs/findings/payloads.md): the feed
+  arrives as newline-delimited documents, five posts per page, one streamed document
+  per post, paged by cursor. Sponsored posts carry four independent signal families
+  and no other post carries any; field names are obfuscated on request by flags in the
+  query variables, so rules also test type names. The first feed page sits inside the
+  4 MB desktop document. Every recorded video has progressive HD and SD sources and a
+  DASH manifest, mostly AV1. Profile and search data arrive through route-definition
+  responses with a guard on every line. A replay needs the client's own headers, the
+  tokens, page fields, and probably module bitmaps that only the site's JavaScript
+  computes. Document ids of follow-up queries are in the script bundles only. The
+  anti-forgery token lives 24 hours and has a refresh endpoint.
+- Not yet verified: whether a replayed request is accepted; whether `/api/graphql/` responses and
   service-worker traffic pass through the stream filter when logged in; cross-site
   replay against the real site. The owner's capture and M2b close the first two, M5
   the last.
@@ -232,55 +243,80 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 - If the gate fails (Comet data not obtainable or not usable): native screens are
   dropped or re-based on Bloks; the product falls back to the clean web twin.
 
-### M3. Clean web twin: first usable app (L)
-- Goal: a daily-usable wrapper with native chrome around the cleaned mobile site.
-- Scope: Compose shell with bottom tabs and top bar hosting the web fallback session.
-  Login flow and session persistence. Back handling and deep navigation. Injected CSS
-  to hide the site's own header and footer. uBlock Origin bundled. External links in a
-  separate clean session, redirect unwrapping, tracking-parameter stripping. File
-  upload, downloads, camera and microphone permission prompts. Pull to refresh. Dark
-  mode. Session kept alive across tab switches.
-- From the M1 review: the first site load waits for the engine to report ready, since
-  pages loaded earlier are not filtered. Measure installing the extension on every
-  start against the current start-up contract and keep the faster reliable one.
-- From the M2a review: make text input robust. A burst of key events sent shortly after
-  a field gains focus lost its first characters once under load. Find the cause in
-  GeckoView's input handling or the test, and fix whichever it is.
-- Exit evidence: scripted on-device walkthrough with screenshots; login survives app
-  restart; instrumented tests for navigation and link handling.
+### M2c. Fix-up after the M2b review (S)
+- Goal: a green instrumented suite and valid JSON after finalize.
+- Scope: adapt the capture-browser typing test to the reload that now follows the
+  start of a capture, run the whole instrumented suite and the device scripts, make a
+  tainted bare number keep the JSON valid at finalize, and let the leak test run from
+  the re-scrubbed copies alone so the original recordings can be deleted.
+- Exit evidence: checks X1 to X6 in docs/prompts/M2c.md.
 
-### M4. Data-layer ad and tracker filtering (M)
-- Goal: no sponsored posts, in web fallback and in captured GraphQL data.
-- Scope: rule engine in twin-bridge driven by rules/*.json from the M2 findings.
-  Two-signal scoring before a node is dropped. GraphQL stream filter and Bloks payload
-  filter. Toggles for suggested posts, suggested reels, people you may know. Balanced
-  and strict tracker modes for Facebook's own telemetry endpoints. Local counter and
-  debug log of dropped and near-miss items.
-- Exit evidence: fixture tests showing every known ad removed and no organic post
-  removed; on-device scroll of a fixed number of screens with zero sponsored posts;
-  before and after request counts.
+### M3a. Web shell core and uBlock Origin (L)
+- Goal: the first build the owner can use daily on a phone.
+- Scope: a shell around the mobile site that feels like an app. Start-up splash and
+  engine readiness, back, reload, menu, persistence across process death and restart,
+  crash recovery, system dark mode, rotation. Link hygiene: outbound links unwrapped,
+  stripped of tracking parameters and opened in the default browser. uBlock Origin
+  fetched at build time and installed as a second built-in extension. A strict mode in
+  which twin-bridge cancels the mobile site's own logging beacons, off by default.
+  Start-up contract measured with two extensions. Root cause of the key-event flake.
+- Not in scope, because no agent can see the logged-in site: restyling the site, hiding
+  its own navigation, native tabs.
+- Ads on this surface are hidden, not removed. The owner counts on the phone how many
+  sponsored posts still show, with ad hiding on and off.
+- Exit evidence: checks S1 to S15 in docs/prompts/M3a.md; docs/SHELL.md and the owner
+  checklist.
 
-### M5. Data twin: token harvest and query replay (L, GATE)
-- Goal: fetch Facebook data on demand without a live Comet page.
-- Scope: hidden desktop-UA session that loads Comet once. Template store mapping
-  friendly query names to document IDs and variable shapes. Token store that follows
-  rotation. Replay client in the extension background. Kotlin client API with typed
-  calls for feed page, comments page, notifications, profile timeline. Rate limiting,
-  backoff, handling of revision-refresh signals, re-harvest when templates go stale.
-  Comet page unloaded after harvest.
-- Design option raised by the emulator freeze: do not run the desktop site's
-  JavaScript application on the device at all. Fetch the page document as text from
-  the anchor page to read tokens, and take document ids from responses that list them.
-  M2b reports where document ids occur. If that works, the harvest costs a few
-  megabytes of download and no heavy page.
-- Replay path chosen in M1: requests are made from an anchor page, a same-origin page
-  of the site with no site JavaScript, held in a headless session. Fallback: fetch from
-  the extension background with Origin, Referer and User-Agent rewritten.
-- Exit evidence: on-device test that replays several consecutive feed pages and one
-  comments page with valid data while no Comet page is loaded; memory before and after
-  unload.
-- If the gate fails: keep the Comet page alive and read its own traffic instead of
-  replaying, at a memory cost. The planner decides.
+### Owner step after M3a
+- Update the `daily` build on the phone and follow docs/SHELL-CHECKLIST.md for about
+  fifteen minutes. Report what worked, what did not, and the sponsored-post counts.
+
+### M3b. Shell completion (M)
+- Goal: everything a daily app needs beyond reading.
+- Scope: file upload and the photo picker, downloads, camera and microphone
+  permissions limited to the site, full-screen video, media controls, settings polish,
+  and fixes for what the owner's trial exposed. If uBlock Origin's filters leave
+  sponsored posts visible, a structure probe the owner can run, which records the
+  page's element structure without text, so cosmetic rules can be written.
+- Exit evidence: set in its prompt after the owner's trial.
+
+### M4. Folded into M3 and M5
+- The Bloks payload filter is dropped: there is no HTTP payload to filter on the
+  logged-in mobile site. Cosmetic filtering and beacon blocking moved to M3.
+- GraphQL ad rules moved to M5: rules v1 from M2b run on replayed responses before
+  they reach Kotlin. Remaining rule work there: per-line guards of
+  `/ajax/route-definition/`, the right column, in-stream video ad breaks, and toggles
+  for suggested content.
+
+### M5a. Data twin tooling (L)
+- Goal: everything needed to harvest and replay, proven on the mock, plus a lab screen
+  the owner can drive.
+- Scope: harvest session, a hidden desktop session that loads the home page once and is
+  then closed. While it loads, the extension passively collects what a replay needs:
+  tokens, page fields, the module bitmaps the site's code computes, the revision, and
+  the document ids of operations, read from the script bundles as they pass. Template
+  store keyed by revision. Anchor page and replay client that add the client's own
+  headers. Token refresh through the site's own refresh endpoint. Rules v1 applied to
+  replayed responses. Rate limiting and backoff. Kotlin client API for feed page,
+  comments, notifications, profile timeline, video. A replay lab screen in the `daily`
+  build with explicit buttons, recording what it does in the capture format.
+- No agent sends a replayed request to the real site. The mock gains a page that
+  behaves like the desktop site as far as harvesting needs.
+- Exit evidence: instrumented tests on the mock for harvest, template store, replay,
+  refresh and rules; the lab checklist for the owner.
+
+### Owner step between M5a and M5b
+- On the phone: run the harvest, then a handful of replays from the lab screen, a
+  few pages of feed, one comments page, notifications. Pull the session. Report whether
+  the account showed any security prompt afterwards.
+
+### M5b. Replay findings (M, GATE)
+- Goal: decide whether the data twin works on the real site.
+- Scope: compare replayed responses with the site's own; settle whether the module
+  bitmaps are required and how stale they may be; confirm that ad rules hold on
+  replayed data; fix what the owner's run exposed; memory and time of a harvest.
+- If the gate fails: keep a desktop page alive on capable devices and read its own
+  traffic, or reduce the product to the web shell of M3. The planner decides.
 
 ### M6. Domain model, normalizer, cache (M)
 - Goal: turn raw GraphQL JSON into stable Kotlin models.
@@ -349,9 +385,11 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 | When | What |
 |---|---|
 | Before M1 | Permanent KVM fix (`sudo usermod -aG kvm $USER`, then restart WSL). Correct the git author email in `~/.gitconfig`. |
-| After M2a, before M2b | Test account login in the M2a build and the ten-minute capture checklist; optional HAR files |
+| After M2a, before M2b | Done 2026-10-02: four logged-in sessions, three from the emulator and one from the phone |
+| After M3a | Update the `daily` build on the phone, follow docs/SHELL-CHECKLIST.md, count the sponsored posts that still show |
+| Between M5a and M5b | Run the harvest and a few replays from the lab screen on the phone |
 | Before M8 | Permission to post real reactions and comments from the test account |
-| Now, optional, then from M7 on | Real phone over wireless debugging. First use: record the desktop site with a page load, which the emulator cannot handle. |
+| From now on | Real phone over wireless debugging, in use since 2026-10-02 |
 | Before M12 | Signing key decision, app name and icon, release channel |
 
 ## 8. Conventions and decisions fixed so far
@@ -392,6 +430,22 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 - The GitHub repository is public. Fixtures are structure-only and are committed only
   when the leak test finds nothing. Raw recordings, findings and reports never contain
   personal data.
+- Every milestone's acceptance includes the whole instrumented suite
+  (`tools/connected-test.sh`) and the device scripts, not only the tests of the new
+  work. M2b changed behaviour that an older device test depended on and nobody ran it.
+- Decisions after M2b: fixtures stay in git as they are; string values under the keys
+  `data` and `encrypted` are redacted at capture time; at the next capture the owner
+  counts sponsored and suggested posts; document ids are taken from script bundles at
+  run time, no further recording is needed for that.
+- From M3a on, launching the `daily` build loads the real site with the owner's
+  account. No agent launches it. `tools/daily-survival-test.sh` is reworked in M3a so
+  it never launches the app.
+- The original pulled recordings may be deleted once the re-scrub tool can rewrite a
+  re-scrubbed copy in place, which M3a adds. Until then they stay.
+- Readers accept the viewer id both as the quoted placeholder and as `0`. Fixtures are
+  not regenerated for that.
+- The gating typing test types one key at a time. The burst variant is a diagnostic
+  that reports without failing the suite.
 - Known gap: the final revision of `tools/setup-toolchain.sh` has not been run against
   an empty home directory. Its JDK and command-line-tools steps were. Revisit in M12.
 
@@ -403,8 +457,10 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 | M1 | gate passed, accepted 2026-10-02, merged into main through pull request 2 | docs/reports/M1.md |
 | M2a | accepted 2026-10-02, merged into main through pull request 3 | docs/reports/M2a.md |
 | Owner capture | first pass done 2026-10-02: sessions `20261002-172602-site` (mobile) and `20261002-172927-site` (desktop). Neither contains a page document. A short supplementary capture with a reload is requested. | none |
-| M2b | prompt issued 2026-10-02, docs/prompts/M2b.md | pending |
-| M3 to M12 | not started | none |
+| M2b | gate passed with reservations, accepted 2026-10-02. Branch `m2b-findings`, waiting for the owner's pull request. | docs/reports/M2b.md |
+| M2c | fix-up accepted 2026-10-02, same branch | docs/reports/M2b.md, last section |
+| M3a | prompt issued 2026-10-02, docs/prompts/M3a.md | pending |
+| M3b to M12 | not started | none |
 
 ## 10. Change log
 
@@ -466,3 +522,21 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   in the guest. The owner is now in group `kvm`, so KVM access is permanent. M2b prompt
   amended: new session listed, desktop document optional and expected from a real
   phone, new lead on where document ids come from.
+- 2026-10-02: M2b report reviewed. Planner re-ran `tools/check.sh` in a fresh clone
+  (180 tests pass, leak test skipped there by design), ran the leak test with the raw
+  recordings present (pass), and made an independent leak check with its own method:
+  of 9,663 fixture strings, 926 also occur in the recordings, all of them type names,
+  enum constants, header names, codec strings, resource hashes, document ids, and
+  placeholders; no non-ASCII text, no URL, no name, no account identifier. Gate
+  accepted as pass with reservations. One defect found: the older capture-browser
+  typing test fails every time since capture start reloads the page, and the full
+  instrumented suite was not run. Fix-up M2c issued on the same branch. Plan revised:
+  A3 reworded, M4 folded into M3 and M5, M5 split into tooling, an owner step and a
+  gate, in the same pattern as M2.
+- 2026-10-02: M2c fix-up reviewed and accepted. Planner re-ran in a fresh clone:
+  `tools/check.sh` (194 extension tests, 30 JVM tests), the instrumented suite twice
+  (37 of 38, then 38 of 38: the one failure was the known key-event flake, with no
+  cascade into other tests), the three device scripts, and an in-place update of the
+  `daily` build on the emulator with its data intact. Answers to the agent's questions
+  recorded in section 8. M3 split into M3a (shell core and uBlock Origin), an owner
+  trial, and M3b (uploads, downloads, permissions, video, polish). M3a prompt issued.

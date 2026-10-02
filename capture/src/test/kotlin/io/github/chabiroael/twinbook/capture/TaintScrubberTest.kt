@@ -26,7 +26,24 @@ class TaintScrubberTest {
             assertEquals(name, c["output"], result.bytes.toString(Charsets.UTF_8))
             assertEquals(name, (c["counts"] as Map<String, Long>).mapValues { it.value.toInt() }, result.counts)
             assertEquals(name, 0, scrubber.countHits(result.bytes))
+            if (c["validJson"] == true) {
+                parseDeep(c["input"] as String)
+                parseDeep(result.bytes.toString(Charsets.UTF_8))
+            }
         }
+        assertTrue(cases.count { it["validJson"] == true } >= 6)
+    }
+
+    /** Parses [text] as JSON, and every string inside it that starts like JSON, recursively. */
+    private fun parseDeep(text: String) {
+        fun visit(v: Any?) {
+            when (v) {
+                is String -> if (v.startsWith("[") || v.startsWith("{")) parseDeep(v)
+                is List<*> -> v.forEach(::visit)
+                is Map<*, *> -> v.values.forEach(::visit)
+            }
+        }
+        visit(MiniJson.parse(text))
     }
 
     @Suppress("UNCHECKED_CAST")

@@ -234,9 +234,15 @@ export class Redactor {
     });
   }
 
-  /** Parsed form fields in order. Secret keys lose their values; other values are scanned as text. */
-  formFields(fields: readonly (readonly [string, string])[]): [string, string][] {
+  /**
+   * Parsed form fields in order. Secret keys lose their values; other values are scanned as text.
+   * A field without a value is kept as `[name, null]`: Gecko's form parser yields `undefined` for
+   * a body part with no `=` (seen on the site's `/ajax/route-definition/` posts), and a missing
+   * value must not throw, or the whole request line is lost.
+   */
+  formFields(fields: readonly (readonly [string, string | null | undefined])[]): [string, string | null][] {
     return fields.map(([name, value]) => {
+      if (typeof value !== "string") return [String(name), null];
       if (this.isSecretKey(name)) {
         if (value.length === 0) return [name, value];
         this.counts.fields++;

@@ -141,7 +141,9 @@ class CaptureRecorderTest {
         }
         assertEquals(0, hits)
         val secretsHtml = files.map { it.readText() }.single { it.contains("mock secrets page") }
-        assertTrue(secretsHtml.contains("window.__boot = [\"!T:field:fb_dtsg!\", !T:cookie:c_user!]"))
+        // The user id stands there as a bare number: its placeholder is quoted (M2c), so the
+        // array stays valid.
+        assertTrue(secretsHtml.contains("window.__boot = [\"!T:field:fb_dtsg!\", \"!T:cookie:c_user!\"]"))
         val sessionJson = JSONObject(File(dir, "session.json").readText())
         evidence("C6 scan of ${files.size} finalized files for ${secrets.all.size} planted secrets in all encodings: $hits hits; secrets page now: ${Regex("""window.__boot = [^;]*;""").find(secretsHtml)?.value}; taint ${sessionJson.getJSONObject("taint")}")
 

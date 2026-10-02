@@ -76,6 +76,24 @@ class CaptureBrowser private constructor(context: Context, val config: Config) {
         current.reload()
     }
 
+    /**
+     * Starts a capture, then reloads the current site's page so that its document is recorded
+     * (the owner's first captures had none). Only the visible site is reloaded: reloading the
+     * heavy desktop page in the background as well once exhausted the emulator. If the current
+     * site has not loaded yet, its first load happens now. Main thread only.
+     */
+    suspend fun startCapture(): String {
+        val id = recorder.start(config.captureProfiles)
+        val site = siteFlow.value
+        if (site in started) {
+            Log.i(AppEngine.TAG, "capture browser: capture $id started, reloading the $site site")
+            current.reload()
+        } else {
+            startIfNeeded(site)
+        }
+        return id
+    }
+
     companion object {
         @Volatile
         private var instance: CaptureBrowser? = null

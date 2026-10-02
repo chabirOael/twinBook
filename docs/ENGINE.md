@@ -55,6 +55,7 @@ extension/
     ndjsonFilter.ts    streaming NDJSON filter core
     htmlIslandFilter.ts streaming filter for <script type="application/json"> islands
     mockAdRule.ts      the M1 mock ad rule (replaced by the rule engine in M4)
+    adRules.ts         ad rules as data (rules/ads-v1.json, M2b proposal) as a DocumentRule
     profiles.ts        site profiles (mock, site) and filter modes
     probe.ts           observe-only probe rule for the real site
     redact.ts          layer 1 redaction; taint.ts layer 2 (docs/CAPTURE.md section 5)
@@ -62,7 +63,8 @@ extension/
     formFields.ts      form-field extraction for the M1 reporter
     bytes.ts, replayResult.ts, jsonGuard.ts
   data/                redaction-rules.json, probe-keys.json (one data file each)
-  tools/               HAR importer (Node; tools/har-import.sh)
+  tools/               HAR importer (Node; tools/har-import.sh); offline capture tools
+                       (tools/capture-tools.sh): re-scrub, scan, findings, fixtures
   test/                Vitest tests (fakeBrowser.ts: a fake WebExtension API for wiring tests)
   lint.mjs, lint-allowlist.json   web-ext lint policy
 mockserver/            pure JVM module: the hermetic mock of the site's traffic shape
@@ -313,6 +315,20 @@ for byte as soon as it cannot be the start of an island. An island is held until
 tag, parsed, handed to the transform, and re-serialized only if the transform changed it
 (`<` escaped as `<` so the JSON can never close its script element). Fail open as above.
 Islands larger than 32 MiB, or unterminated at the end, pass through unparsed.
+
+### Ad rules v1 (`src/lib/adRules.ts`, `rules/ads-v1.json`)
+
+The M2b proposal for M4, not wired into `filters.ts` yet. `createAdRule(rules)` returns a
+`DocumentRule` for one response: an edge is an ad when signals of at least `minFamilies`
+families match; ad edges are removed from `data.viewer.news_feed.edges`, a `$stream$` document
+whose edge is an ad is dropped, documents whose `path` runs through a removed edge are dropped,
+and a dropped final document becomes `{"extensions":{"is_final":true}}`. Signals and the
+evidence for them are in docs/findings/payloads.md section 5; the fixture tests run the rules
+over the recorded feed pages.
+
+The real site's `/ajax/route-definition/` responses put a `for (;;);` guard in front of every
+line; the core accepts a guard only before the first document, so those lines fail open (M2b
+finding; M4 must handle it before filtering profile and search data).
 
 ### Mock rule (`src/lib/mockAdRule.ts`)
 

@@ -2,7 +2,8 @@
 // Usage: node tools/capture-summary.mjs [--short] <captures/<session-id>>
 //
 // Summarizes a pulled capture session (docs/CAPTURE.md): records by host and type, content
-// types, encodings, protocols, cache and service-worker hints, the observe-only filter, the
+// types, encodings, protocols, cache and service-worker hints, long-lived connections
+// (WebSocket handshakes, event streams, service-worker scripts), the observe-only filter, the
 // section 2 leads of the M2a prompt, and a redaction report (cookie names with attributes,
 // layer 1 counts, layer 2 summary, and a scan for keyed values left unredacted).
 // Reads only the redacted session; prints names and counts, never values.
@@ -74,6 +75,29 @@ for (const r of requests) {
   if (r.d.tabId === -1) count(cache, `tabId=-1 (no tab: service worker or background) ${r.own ? "own" : "3rd"}`);
 }
 table("Cache and service-worker hints", cache);
+
+// Long-lived connections: WebSocket handshakes (webRequest type "websocket", or an Upgrade
+// header), server-sent event streams, and service-worker scripts. Their frames or later traffic
+// are not visible to webRequest, so the stream filter never sees what they carry.
+const reqHeaders = new Map(by("sendHeaders").map((l) => [l.rid, l.headers]));
+const resHeaders = new Map(by("headers").map((l) => [l.rid, l]));
+const pathOf = (u) => { try { return new URL(u).pathname.replace(/\d{6,}/g, "<n>"); } catch { return "?"; } };
+const longLived = new Map();
+for (const r of requests) {
+  const up = header(reqHeaders.get(r.rid), "upgrade");
+  const res = resHeaders.get(r.rid);
+  const ct = header(res?.headers, "content-type") ?? "";
+  let kind = null;
+  if (r.d.type === "websocket" || /websocket/i.test(up ?? "")) kind = "websocket";
+  else if (/text\/event-stream/i.test(ct)) kind = "event-stream";
+  else if (r.d.type === "script" && r.own && /^\/sw\b|service_?worker/i.test(pathOf(r.d.url))) kind = "service-worker script?";
+  if (kind === null) continue;
+  const proto = header(reqHeaders.get(r.rid), "sec-websocket-protocol");
+  let scheme = "?";
+  try { scheme = new URL(r.d.url).protocol.replace(":", ""); } catch {}
+  count(longLived, `${kind.padEnd(22)} ${scheme} ${host(r.d.url)} ${pathOf(r.d.url)}  status ${res?.d.statusCode ?? "-"}${proto ? `  protocol ${proto}` : ""}  tab ${r.d.tabId}`);
+}
+table("Long-lived connections (handshake metadata; frames are not recorded)", longLived);
 
 const kinds = new Map();
 const candidates = new Map();
