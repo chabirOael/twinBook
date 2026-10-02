@@ -121,11 +121,17 @@ class EngineSession internal constructor(
         geckoSession.loadUri(url)
     }
 
-    /** Loads [url] and suspends until that load stops. Returns the page state at that moment. */
+    /**
+     * Loads [url] and suspends until a load stops. Returns the page state at that moment. The
+     * initial about:blank load of a new session is not mistaken for it (unless about:blank was
+     * asked for); a redirect to another URL counts.
+     */
     suspend fun loadAndWait(url: String, timeoutMs: Long = 30_000): PageState = withContext(Dispatchers.Main.immediate) {
         val before = pageFlow.value.loadCount
         load(url)
-        withTimeout(timeoutMs) { pageFlow.first { it.loadCount > before || it.crashed } }
+        withTimeout(timeoutMs) {
+            pageFlow.first { it.crashed || (it.loadCount > before && (it.url == url || (it.url != ABOUT_BLANK && url != ABOUT_BLANK))) }
+        }
     }
 
     /** The user agent this session sends. */
@@ -135,5 +141,9 @@ class EngineSession internal constructor(
     fun close() {
         detach()
         geckoSession.close()
+    }
+
+    private companion object {
+        const val ABOUT_BLANK = "about:blank"
     }
 }

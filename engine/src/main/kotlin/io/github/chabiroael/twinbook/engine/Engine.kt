@@ -19,11 +19,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.mozilla.geckoview.BuildConfig as GeckoBuildConfig
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
+import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
 
 /**
@@ -69,23 +71,56 @@ class Engine private constructor(context: Context, val config: EngineConfig) {
         Log.i(TAG, "GeckoView $GECKOVIEW_VERSION started; content blocking defaults: ${defaultContentBlocking.toJson()}")
         bridge.handle("engine.info") { engineInfo() }
         installExtension()
+        // GeckoView starts the background scripts of already-installed extensions only on
+        // "extensions-late-startup", which fires when the first session window opens
+        // (geckoview.js). A fresh install starts them at once, a normal start does not. A
+        // bootstrap session makes the engine start the bridge on its own; it is closed as soon
+        // as the bridge is connected.
+        val bootstrap = GeckoSession().apply {
+            open(runtime)
+            loadUri("about:blank")
+        }
+        Log.i(TAG, "bootstrap session opened")
         scope.launch {
             bridge.state.first { it == BridgeState.Connected }
             timingsFlow.value = timingsFlow.value.copy(bridgeConnectedElapsed = SystemClock.elapsedRealtime())
+            bootstrap.close()
+            Log.i(TAG, "bootstrap session closed")
         }
     }
 
     private fun installExtension() {
         runtime.webExtensionController.ensureBuiltIn(config.extensionLocation, config.extensionId).accept(
-            { ext ->
-                val extension = ext ?: return@accept
-                Log.i(TAG, "extension ${extension.id} ${extension.metaData.version} installed (built-in=${extension.isBuiltIn})")
-                extension.setMessageDelegate(messageDelegate, config.nativeApp)
-                timingsFlow.value = timingsFlow.value.copy(extensionInstalledElapsed = SystemClock.elapsedRealtime())
-                extensionFlow.value = ExtensionState.Installed(extension.id, extension.metaData.version, extension)
-            },
+            { ext -> ext?.let { onExtensionInstalled(it, reinstalled = false) } },
             { error ->
                 Log.e(TAG, "extension install failed", error)
+                extensionFlow.value = ExtensionState.Failed(error?.toString() ?: "unknown error")
+            },
+        )
+    }
+
+    private fun onExtensionInstalled(extension: WebExtension, reinstalled: Boolean) {
+        Log.i(TAG, "extension ${extension.id} ${extension.metaData.version} installed (built-in=${extension.isBuiltIn}, reinstalled=$reinstalled)")
+        extension.setMessageDelegate(messageDelegate, config.nativeApp)
+        timingsFlow.value = timingsFlow.value.copy(extensionInstalledElapsed = SystemClock.elapsedRealtime(), extensionReinstalled = reinstalled)
+        extensionFlow.value = ExtensionState.Installed(extension.id, extension.metaData.version, extension)
+        if (!reinstalled) scope.launch { recoverIfBackgroundNeverStarts() }
+    }
+
+    /**
+     * Gecko writes its add-on startup state (addonStartup.json.lz4) a moment after an install.
+     * If the process dies before that, the next start finds the add-on in its database with
+     * the same version, so ensureBuiltIn does nothing, yet never starts its background script.
+     * The bridge then never connects. Reinstalling repairs it.
+     */
+    private suspend fun recoverIfBackgroundNeverStarts() {
+        val connected = withTimeoutOrNull(config.backgroundStartTimeoutMs) { bridge.state.first { it == BridgeState.Connected } }
+        if (connected != null) return
+        Log.w(TAG, "twin-bridge background did not start within ${config.backgroundStartTimeoutMs} ms; reinstalling")
+        runtime.webExtensionController.installBuiltIn(config.extensionLocation).accept(
+            { ext -> ext?.let { onExtensionInstalled(it, reinstalled = true) } },
+            { error ->
+                Log.e(TAG, "extension reinstall failed", error)
                 extensionFlow.value = ExtensionState.Failed(error?.toString() ?: "unknown error")
             },
         )
@@ -195,6 +230,8 @@ data class EngineConfig(
     val extensionLocation: String = TWIN_BRIDGE_LOCATION,
     val extensionId: String = TWIN_BRIDGE_ID,
     val nativeApp: String = TWIN_BRIDGE_NATIVE_APP,
+    /** If the bridge has not connected this long after install, the extension is reinstalled. */
+    val backgroundStartTimeoutMs: Long = 10_000,
     /** Extra runtime settings, applied after the defaults above. */
     val configureRuntime: (GeckoRuntimeSettings.Builder) -> Unit = {},
 ) {
@@ -227,6 +264,8 @@ data class EngineTimings(
     val engineStartElapsed: Long,
     val extensionInstalledElapsed: Long = 0,
     val bridgeConnectedElapsed: Long = 0,
+    /** True if the extension had to be reinstalled because its background never started. */
+    val extensionReinstalled: Boolean = false,
 )
 
 enum class TrackingProtection { DEFAULT, STRICT }

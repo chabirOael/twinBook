@@ -13,9 +13,6 @@
 (function () {
   "use strict";
 
-  // References taken before anything else runs; compared again at the end.
-  var startRefs = captureNatives(window);
-  var startElements = elementSignature();
   var params = new URLSearchParams(location.search);
   var run = params.get("run") || "";
   var scenario = params.get("scenario") || "";
@@ -189,6 +186,11 @@
   ];
 
   var NATIVE_SOURCE = /^function [\w$ ]*\(\) \{\s*\[native code\]\s*\}$/;
+
+  // References taken before any request runs; compared again at the end. (Only declarations
+  // precede this point.)
+  var startRefs = captureNatives(window);
+  var startElements = elementSignature();
 
   function lookup(w, t) {
     var desc = Object.getOwnPropertyDescriptor(t[1](w), t[2]);
