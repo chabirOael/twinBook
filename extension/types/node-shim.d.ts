@@ -1,4 +1,4 @@
-// The few Node.js APIs the tests and tools/har-import.ts use, declared here instead of adding
+// The few Node.js APIs the tests and tools/*.ts use, declared here instead of adding
 // @types/node as a dependency. Signatures are narrowed to how this code calls them.
 
 declare module "node:fs" {
@@ -36,7 +36,9 @@ declare module "node:crypto" {
 
 declare const process: {
   argv: string[];
+  env: Record<string, string | undefined>;
   exitCode: number | undefined;
+  exit(code?: number): never;
   stdout: { write(s: string): void };
   stderr: { write(s: string): void };
 };

@@ -1,6 +1,6 @@
 {
-  "about": "Layer 1 redaction rules for twin-bridge captures (docs/CAPTURE.md section 5). Every entry has a 'why'. Values are replaced by a placeholder of the same length; names, keys and structure stay. Shape-only fields such as __rev, __req, __s, __hsi, __dyn, __csr, __user are deliberately absent.",
-  "version": 1,
+  "about": "Layer 1 redaction rules for twin-bridge captures (docs/CAPTURE.md section 5). Every entry has a 'why'. Values are replaced by a placeholder of the same length; names, keys and structure stay. Shape-only fields such as __rev, __req, __s, __hsi, __dyn, __csr, __user are deliberately absent. Key names match case-insensitively and exactly, so camel-case spellings need their own entry (csrftoken already covers csrfToken, sessionKey covers sessionkey).",
+  "version": 3,
   "minTaintLength": 8,
   "taintStopList": [
     "true",
@@ -178,6 +178,174 @@
     {
       "name": "otp",
       "why": "One-time code."
+    },
+    {
+      "name": "accessToken",
+      "why": "OAuth access token, camel case. Exact-name matching on access_token would miss it."
+    },
+    {
+      "name": "refreshToken",
+      "why": "OAuth refresh token, camel case."
+    },
+    {
+      "name": "idToken",
+      "why": "OpenID token, camel case."
+    },
+    {
+      "name": "authToken",
+      "why": "Generic session credential, camel case."
+    },
+    {
+      "name": "oauthToken",
+      "why": "OAuth token, camel case."
+    },
+    {
+      "name": "sessionToken",
+      "why": "Session token, camel case."
+    },
+    {
+      "name": "xsrfToken",
+      "why": "Anti-forgery token, camel case."
+    },
+    {
+      "name": "csrf",
+      "why": "Anti-forgery token under its short name."
+    },
+    {
+      "name": "xsrf",
+      "why": "Anti-forgery token under its short name."
+    },
+    {
+      "name": "dtsg",
+      "why": "Short name under which page data can hold the fb_dtsg value."
+    },
+    {
+      "name": "fbDtsg",
+      "why": "fb_dtsg, camel case."
+    },
+    {
+      "name": "dtsg_ag",
+      "why": "fb_dtsg_ag without its prefix."
+    },
+    {
+      "name": "asyncGetToken",
+      "why": "async_get_token, camel case."
+    },
+    {
+      "name": "userAccessToken",
+      "why": "Graph API user token, camel case."
+    },
+    {
+      "name": "user_access_token",
+      "why": "Graph API user token."
+    },
+    {
+      "name": "pageAccessToken",
+      "why": "Graph API page token, camel case."
+    },
+    {
+      "name": "page_access_token",
+      "why": "Graph API page token."
+    },
+    {
+      "name": "appsecret_proof",
+      "why": "Graph API request signature derived from a token."
+    },
+    {
+      "name": "signed_request",
+      "why": "Signed payload that embeds a token."
+    },
+    {
+      "name": "signedRequest",
+      "why": "Signed payload that embeds a token, camel case."
+    },
+    {
+      "name": "client_secret",
+      "why": "Application secret."
+    },
+    {
+      "name": "clientSecret",
+      "why": "Application secret, camel case."
+    },
+    {
+      "name": "passwd",
+      "why": "Password, short spelling."
+    },
+    {
+      "name": "pwd",
+      "why": "Password, short spelling."
+    },
+    {
+      "name": "loginNonce",
+      "why": "Login nonce, camel case."
+    },
+    {
+      "name": "login_nonce",
+      "why": "Login nonce."
+    },
+    {
+      "name": "machineId",
+      "why": "Device identifier bound to the login (machine_id), camel case."
+    },
+    {
+      "name": "logoutToken",
+      "why": "Seen in the M2b opaque-value scan (desktop page data): authorizes the logout request of the session."
+    },
+    {
+      "name": "logout_hash",
+      "why": "Seen in the M2b scan: hash that authorizes logout, bound to the session."
+    },
+    {
+      "name": "secret",
+      "why": "Seen in the M2b scan (desktop page data): a 32-character value under this name; treated as a credential."
+    },
+    {
+      "name": "accountKey",
+      "why": "Seen in the M2b scan: 64 hex characters bound to the account."
+    },
+    {
+      "name": "accountKeyV2",
+      "why": "Seen in the M2b scan: 64 hex characters bound to the account."
+    },
+    {
+      "name": "userKeyBase",
+      "why": "Seen in the M2b scan: 64 hex characters bound to the user."
+    },
+    {
+      "name": "ServerNonce",
+      "why": "Seen in the M2b scan: a server nonce; exact-name matching on nonce misses it."
+    },
+    {
+      "name": "compat_iframe_token",
+      "why": "Seen in the M2b scan: token that authorizes an iframe of the session."
+    },
+    {
+      "name": "link_react_default_hash",
+      "why": "Seen in the M2b scan: per-session hash that signs outgoing links through the link shim."
+    },
+    {
+      "name": "untrusted_link_default_hash",
+      "why": "Seen in the M2b scan: per-session hash that signs outgoing links through the link shim."
+    },
+    {
+      "name": "device_id",
+      "why": "Seen in the M2b scan: device identifier bound to the login, like machine_id."
+    },
+    {
+      "name": "deviceId",
+      "why": "Seen in the M2b scan: device identifier bound to the login."
+    },
+    {
+      "name": "e2eeDeviceID",
+      "why": "Seen in the M2b scan: messaging device identifier bound to the login."
+    },
+    {
+      "name": "openDeviceID",
+      "why": "Seen in the M2b scan: device identifier bound to the login."
+    },
+    {
+      "name": "x-dgw-deviceid",
+      "why": "Seen in the M2b scan: device identifier in the realtime gateway's WebSocket URL."
     }
   ]
 }

@@ -186,12 +186,21 @@ function metaLine(ev: string, details: AnyDetails, extra: (session: Session, m: 
   if (hit === null) return;
   const { session, m } = hit;
   try {
+    // The extra part (headers, request body) is computed on its own: if it throws, the line
+    // is still recorded with the error instead of being lost (M2b: two request lines were lost).
+    let more: Record<string, unknown>;
+    try {
+      more = extra(session, m);
+    } catch (e) {
+      noteError(session, `${ev}: ${String(e)}`);
+      more = { extraError: String(e).slice(0, 200) };
+    }
     push(session, ev, details.requestId, {
       profile: m.profile.name,
       own: m.own,
       t: details.timeStamp,
       d: pickDetails(details, session.redactor),
-      ...extra(session, m),
+      ...more,
     });
   } catch (e) {
     noteError(session, `${ev}: ${String(e)}`);

@@ -62,7 +62,8 @@ export function pickDetails(details: object, redactor: Redactor): Record<string,
 export interface RecordedRequestBody {
   /** formData: parsed fields in order; raw: text of a non-form body; binary: size only. */
   kind: "formData" | "raw" | "binary" | "error" | "none";
-  fields?: [string, string][];
+  /** A field without a value (a body part with no `=`) is `[name, null]`. */
+  fields?: [string, string | null][];
   text?: string;
   bytes?: number;
   truncated?: boolean;
@@ -70,7 +71,7 @@ export interface RecordedRequestBody {
 }
 
 interface RequestBodyLike {
-  formData?: Record<string, string[]> | undefined;
+  formData?: Record<string, (string | undefined)[]> | undefined;
   raw?: { bytes?: ArrayBuffer | undefined; file?: string | undefined }[] | undefined;
   error?: string | undefined;
 }
@@ -80,7 +81,7 @@ export function recordRequestBody(body: RequestBodyLike | undefined | null, reda
   if (body === undefined || body === null) return { kind: "none" };
   if (body.error !== undefined) return { kind: "error", error: body.error };
   if (body.formData !== undefined) {
-    const fields: [string, string][] = [];
+    const fields: [string, string | undefined][] = [];
     for (const [name, values] of Object.entries(body.formData)) for (const v of values) fields.push([name, v]);
     return { kind: "formData", fields: redactor.formFields(fields) };
   }
