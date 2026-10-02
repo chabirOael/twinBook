@@ -2,6 +2,7 @@ package io.github.chabiroael.twinbook
 
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -86,7 +87,11 @@ class RealSiteProbe {
         waitFor("engine", 90_000) { shell.phase.value == Shell.Phase.Ready }
         check(shell.blocker.value is BlockerState.Ready) { "blocker ${shell.blocker.value}" }
         // The shell loads the site as soon as its screen is shown: the counter starts before that.
-        measuredLoad("load 1, ad hiding on (uBlock Origin ${shell.blocker.value})") { compose.onNodeWithTag("open-shell").performClick() }
+        measuredLoad("load 1, ad hiding on (uBlock Origin ${shell.blocker.value})") {
+            compose.onNodeWithTag("open-shell").performClick()
+            // Compose test frames advance only through the test API: let the shell screen appear.
+            compose.onNodeWithTag("shell").assertIsDisplayed()
+        }
         compose.waitForIdle()
         Thread.sleep(1_000)
         shellCmd("screencap -p /data/local/tmp/twinbook-s11-real-site.png")
