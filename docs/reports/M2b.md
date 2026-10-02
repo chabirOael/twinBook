@@ -324,3 +324,106 @@ Every way personal data could still reach a fixture:
   socket client), M5's harvest option (document ids are only partly in the document), and
   "Facts verified" (zstd/HTTP/3 logged in too, GraphQL `text/html`, no service-worker answers,
   web worker requests pass the filter).
+
+## M2c fix-up
+
+### Outcome
+
+The typing test now waits for the capture-start reload, and every capture browser test starts
+from a known state; a tainted bare number now stays valid JSON in both scrubbers, and the
+tools, fixtures and leak test work with only the `-rescrub` copies. The whole instrumented suite
+passed three times in a row (38 of 38 each), but the typing test's key-event path is still
+flaky (one failure in five full-suite runs), and `daily-survival-test.sh` was not run as
+written because it launches and updates the `daily` app.
+
+### Acceptance checks
+
+| ID | Status | Evidence |
+|---|---|---|
+| X1 | pass | Fresh clone of `m2b-findings` at `ae24644`, `env -i HOME=$HOME bash tools/check.sh`: exit 0 in 109 s. Extension `Test Files 16 passed (16)`, `Tests 194 passed \| 1 skipped (195)` (the leak test, no raw sessions in a clone); `lint: errors 0, warnings 1 (allowed 1), notices 0`; Gradle `BUILD SUCCESSFUL in 1m 37s`; JVM tests `:data` 1, `:capture` 7, `:mockserver` 22, 0 failed (`:data` and `:mockserver` restored from the Gradle build cache, `:capture` ran); last line `== check.sh: all checks passed`. In the working tree with the raw sessions: 195 passed, leak test included. |
+| X2 | pass, with a flaky test | Three consecutive runs of `tools/connected-test.sh` (A, B, C), each `BUILD SUCCESSFUL` (174 s, 172 s, 162 s), each 38 passed, 0 failed, 0 skipped: `:app` CaptureBrowserScreenTest 4, EngineLabScreenTest 3; `:engine` BridgeTest 7, CaptureRecorderTest 3, DocumentFilterTest 1, ObserveModeTest 3, ReplayProbeTest 1, SessionsTest 2, StreamFilterTest 14. Two earlier full runs failed, both reported: run 1, `CaptureRecorderTest#recordsEveryRequestRedactsAtTheSourceAndScrubsAtFinalize` (37/38), my own regression: the test expected the old unquoted placeholder, fixed in `ae24644`; run 2, `CaptureBrowserScreenTest#textInputFromInputMethodAndKeyEvents` (37/38), the key-event flake below. Typing test alone: before the change 1 failure in 5 runs (first run after an install); after it 8 of 8 fresh-install Gradle runs passed. |
+| X3 | partial | `persistence-test.sh`: `== persistence-test: PASS`. `extension-update-test.sh`: `== extension-update-test: PASS`. `capture-kill-test.sh`: `session probe-open-1790962666568 is gone after the app start`, `== capture-kill-test: PASS`. `daily-survival-test.sh`: **not run**. It launches the `daily` app, writes a marker into its storage with `run-as` and updates it with `daily-install.sh`. Section 2 of the prompt forbids launching or installing `daily`, and X6 requires its install time unchanged. In its place, a read-only check before all device work (20:23) and after it (20:46): `firstInstallTime=2026-10-02 10:43:38`, `lastUpdateTime=2026-10-02 18:12:54`, `versionName=0.1.0-daily`, 4 entries in `files/`, 5 in `files/captures/`, no process; identical. |
+| X4 | pass | Both scrubbers write `"!T:<label>!"` where a match is a whole JSON number, with the quotes escaped for its depth of JSON-in-a-string. Shared vectors 14 → 26 (9 marked `validJson`; both runners parse their output and every JSON string inside it). Vitest `taint.test.ts` + `rescrub.test.ts`: `Tests 35 passed (35)`. JVM: `TaintScrubberTest` 3 tests, 0 failed (all 26 vectors), `CaptureStoreTest` 4, 0 failed, including the new finalize test `aSecretThatIsAJsonNumberLeavesValidJson` (body and request `variables` parse, label kept). The old scrubbers fail 7 of the new vectors in both languages, for example Kotlin `ComparisonFailure: numeric secret as a bare JSON number becomes a quoted placeholder`. On the device: `secrets page now: window.__boot = ["!T:field:fb_dtsg!", "!T:cookie:c_user!"];`. Older sessions: `rescrub.test.ts` "a session finalized before the change (bare placeholders) is still read" (ndjson and guarded bodies, 0 parse failures, 3 repairs). Against the owner's recordings, run offline with counts only: the rule quotes 4, 19 and 1 places in `172927`, `183314` and `181317`; 0 lines got worse; 34 more embedded JSON strings parse. |
+| X5 | pass | The 11 directories that are not `-rescrub` copies were moved to `captures/_aside-m2c/`, leaving the four copies visible. Leak test: `fixture leak test: raw sessions 2 (re-scrubbed copies 2, originals 0); raw non-structural strings 33560, identifier tokens 56506, remapped numbers 477, non-schema keys 13240; fixture files 83, strings and keys 577440, tokens 57100, numbers 68103; leaks 0`. Fixtures: `83 files, 13541343 bytes`, and the hash over all files is `f357bba870a64416` before and after regenerating (byte-identical). Findings tool: exit 0, 2043 lines, identical to the run with the originals present. `leakscan` over the 13 files M2c changed: 82 matches against 79 before M2c; the 3 new ones are the words `scrubbed` and `position` and the site's host name in a synthetic test URL. Everything moved back: 15 directories, and the leak test then reports `raw sessions 4 (re-scrubbed copies 2, originals 2)`. Nothing under `captures/` was deleted. |
+| X6 | pass | `git status`: clean after the report commit. `git log --oneline -8` below. `main` = `origin/main` = `a173123`; no remote branch contains `m2b-findings`. `daily`: `firstInstallTime=2026-10-02 10:43:38`, `lastUpdateTime=2026-10-02 18:12:54` at 20:02, 20:23 and 20:46, unchanged. Emulator stopped. |
+
+```
+(this commit) docs: M2c fix-up section in the M2b report
+ae24644 C6 device test: the mock's numeric user id now has a quoted placeholder
+3395951 leak test and docs: the re-scrubbed copies are enough; say which pulled sessions may be deleted
+3b63341 layer 2: a numeric secret in a JSON number position becomes a quoted placeholder
+d48c7e3 C10 typing test waits for the capture-start reload; every capture browser test starts from a known state
+d462705 docs: correct the review date in the plan
+6d51f3c docs: accept M2b gate, revise plan, add M2c fix-up prompt
+6960523 docs: add M2b report
+```
+
+### What changed, file by file
+
+- `app/src/androidTest/.../CaptureBrowserScreenTest.kt`: the typing test counts document
+  loads, waits for the reload after capture start, the reloaded page's own layout report and
+  the end of loading, then taps at the new positions. Before typing it waits until GeckoView
+  offers an input connection of the right kind (text, then password); an A/B of 4 runs each
+  showed no difference, and it stays as a state wait. `resetSharedState`, before and after
+  every test: waits for a finalize to end, discards a capture left running, hides the soft
+  keyboard, waits for the app's window focus. With a deliberate failure while recording and
+  with the keyboard up, the next tests passed. Without the reset, the planner's cascade came
+  back: `Failed to inject touch input` in `captureStartReloadsThePageSoItsDocumentIsRecorded`.
+  The other three tests start no capture, so they had no reload assumption.
+- `capture/.../TaintScrubber.kt`, `extension/src/lib/taint.ts`: rule 4 and `quoteAt`. A
+  numeric match is quoted when the nearest non-blank byte before it is `:`, `,` or `[` and
+  after it `,`, `]` or `}`, and the nearest quote before it does not open a plain string. The
+  depth is the number of trailing zero bits of (backslashes before that quote + 1), plus one
+  when that quote opens a string holding JSON. The last condition came from the owner's data:
+  most bare placeholders there sit in comma lists inside strings, which a plain
+  number-position test would have quoted into broken strings.
+- `extension/test/vectors/taint.json` (+12 cases, a `validJson` flag), `extension/test/taint.test.ts`,
+  `capture/src/test/.../TaintScrubberTest.kt` (deep JSON parse of `validJson` outputs),
+  `capture/src/test/.../CaptureStoreTest.kt` (finalize test), `extension/test/rescrub.test.ts`
+  (old and new sessions through the reader).
+- `engine/src/androidTest/.../CaptureRecorderTest.kt`: C6 now expects the quoted placeholder.
+- `extension/tools/findings/session.ts`: `repairedPlaceholders` counts each body once. M2b's
+  "765 places" counted every parse of a body: there are 65 and 68 distinct bare placeholders
+  (391 and 456 before this fix), of which 4 and 19 are real numbers.
+- `extension/test/fixtures.test.ts`: the leak test uses the `-rescrub` copies, and the originals
+  only while they exist, and prints how many of each it used.
+- `docs/CAPTURE.md`: the layer 2 rule for numbers replaces "Known defect"; new section "Which
+  pulled sessions may be deleted" (the four originals once their copies exist, the two M2a
+  sessions, the mock sessions; never the four `-rescrub` copies). `fixtures/README.md`: which
+  directories the fixtures need, and the leak test's sources. `docs/findings/payloads.md`: the
+  two "765" passages corrected.
+
+### Still flaky
+
+`CaptureBrowserScreenTest#textInputFromInputMethodAndKeyEvents`, key-event half only. The reload
+wait works: in every run since the change, the taps happened after both layout reports. Two
+failures of the burst sent by `input keyboard text Hw-Pass1`, both on the first run after a
+fresh install:
+
+- before the change (alone, `app-instrument.sh`): `timed out waiting for password from key events`,
+  page values `P … Pass1` (the first three keys lost);
+- after the change (full suite, run 2): `timed out waiting for password from key events; page logs
+  [… (focus, pass), (pass, H), (pass, Hw-), (pass, Hw), (pass, Hw-P), (pass, Hw-Pa), (pass, Hw-Pass), (pass, Hw-Pas), (pass, Hw-Pas1s)]`
+  (every key arrived, two in swapped order).
+
+Logcat of the second failure: on the password focus Gboard ran `onStartInput` and
+`onStartInputView` twice, 290 ms apart (20:27:20.502 and 20:27:20.790), so the burst can land
+while the input method reconnects. The 8 single-test fresh-install runs and runs A to C did not
+fail. Gradle runs `:app` and `:engine` connected tasks in parallel (`org.gradle.parallel=true`).
+The engine tests started about three minutes after this test, so only the engine APK's install
+could have overlapped it. I did not change the runner or add a retry. Root cause left to M3.
+
+### Questions for the planner
+
+1. `daily-survival-test.sh` launches the `daily` app, writes into its storage and updates it,
+   which the M2c rules forbid. Should it become read-only (install times and a listing, as done
+   here), or stay as it is and be run only by the owner?
+2. Once the originals are deleted, `rescrub` cannot apply later rules to those sessions, since it
+   refuses a `-rescrub` copy as input. Allow re-scrubbing a copy in place (through a temporary
+   directory) before the owner deletes them?
+3. New recordings will hold the viewer id as the string `"!T:cookie:c_user!"`. Old ones are read
+   as `0`, which is also what the fixtures hold. Should M6 accept both, or should `repairBare`
+   turn old bare placeholders into the same quoted string (this would change the fixtures)?
+4. For the M3 typing flake: is typing one key at a time and waiting for each to reach the page
+   acceptable as the test's input model (closer to a person typing), or must the test keep
+   sending a burst?
