@@ -24,6 +24,7 @@ const host = (u) => { try { return new URL(u).hostname; } catch { return "?"; } 
 const count = (map, key, n = 1) => map.set(key, (map.get(key) ?? 0) + n);
 const table = (title, map, limit = 40) => {
   console.log(`\n${title}`);
+  if (map.size === 0) console.log("  (none)");
   for (const [k, v] of [...map].sort((a, b) => b[1] - a[1]).slice(0, limit)) console.log(`  ${String(v).padStart(6)}  ${k}`);
   if (map.size > limit) console.log(`  ... ${map.size - limit} more`);
 };

@@ -88,9 +88,9 @@ The `body` line: `file` (`bodies/<rid>-<n>.res`), `type`, `contentType`, `conten
 (`[offset, length, ms since the response started]` per chunk, at most 20,000 entries,
 `chunkLogTruncated`), `durationMs`.
 
-The file holds the recorded bytes with layer 1 and layer 2 applied. Both layers keep byte
-offsets for layer 1 placeholders (same length); layer 2 placeholders change the length
-(section 5), so after finalize, offsets in `chunks` refer to the bytes as they arrived.
+The file holds the recorded bytes with layer 1 and layer 2 applied. Layer 1 placeholders have
+the length of the value they replace; layer 2 placeholders do not (section 5). So `chunks`
+offsets and `sha256` always refer to the bytes as they arrived, not to the stored file.
 
 ## 3. Directory layout
 
