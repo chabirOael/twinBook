@@ -18,6 +18,20 @@ class RecordedRequest(
     val body: ByteArray,
     val receivedAtMillis: Long,
 ) {
+    /** Status of the response the server sent, once sent (0 before). */
+    @Volatile
+    var responseStatus: Int = 0
+        internal set
+
+    /** SHA-256 (hex) of the response body content as served, before any gzip coding. */
+    @Volatile
+    var responseSha256: String? = null
+        internal set
+
+    @Volatile
+    var responseLength: Long = 0
+        internal set
+
     val query: Map<String, String> by lazy { parseForm(rawQuery) }
 
     fun header(name: String): String? = headers.firstOrNull { it.first.equals(name, ignoreCase = true) }?.second
@@ -142,10 +156,24 @@ internal object HttpIo {
 /** Writes HTTP/1.1 responses. Every response closes the connection. */
 class ResponseWriter internal constructor(private val out: OutputStream) {
     private var started = false
+    private val digest = java.security.MessageDigest.getInstance("SHA-256")
+    internal var status = 0
+        private set
+    internal var contentLength = 0L
+        private set
+
+    /** Adds body content (before any content coding) to the response's hash. */
+    fun noteContent(bytes: ByteArray) {
+        digest.update(bytes)
+        contentLength += bytes.size
+    }
+
+    internal fun contentSha256(): String = digest.digest().joinToString("") { "%02x".format(it) }
 
     /** A complete response with a fixed body. */
     fun send(status: Int, contentType: String, body: ByteArray, headers: List<Pair<String, String>> = emptyList()) {
         writeHead(status, listOf("Content-Type" to contentType, "Content-Length" to body.size.toString()) + headers)
+        noteContent(body)
         out.write(body)
         out.flush()
     }
@@ -163,6 +191,7 @@ class ResponseWriter internal constructor(private val out: OutputStream) {
     private fun writeHead(status: Int, headers: List<Pair<String, String>>) {
         check(!started) { "response already started" }
         started = true
+        this.status = status
         val sb = StringBuilder("HTTP/1.1 $status ${reason(status)}\r\n")
         for ((name, value) in headers + listOf("Connection" to "close", "Cache-Control" to "no-store")) {
             sb.append(name).append(": ").append(value).append("\r\n")

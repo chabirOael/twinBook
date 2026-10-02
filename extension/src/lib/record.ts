@@ -135,7 +135,12 @@ export class BodyRecorder {
   }
 }
 
-/** File name of a request's response body inside the session directory. */
-export function bodyFileName(requestId: string): string {
-  return `bodies/${requestId.replace(/[^A-Za-z0-9_-]/g, "_")}.res`;
+/** File name of a response body inside the session directory; `n` makes it unique in the session. */
+export function bodyFileName(requestId: string, n: number): string {
+  return `bodies/${requestId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 60)}-${n}.res`;
+}
+
+/** Responses that never get a stream filter: informational, redirects, no content, not modified. */
+export function hasNoBodyToTap(statusCode: number | undefined): boolean {
+  return statusCode !== undefined && (statusCode < 200 || (statusCode >= 300 && statusCode < 400) || statusCode === 204);
 }

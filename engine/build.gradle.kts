@@ -48,6 +48,7 @@ kotlin {
 dependencies {
     api(libs.geckoview)
     api(libs.kotlinx.coroutines.android)
+    api(project(":capture"))
 
     androidTestImplementation(project(":mockserver"))
     androidTestImplementation(libs.androidx.test.ext.junit)

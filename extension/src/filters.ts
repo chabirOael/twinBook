@@ -21,7 +21,7 @@ import { mockAdIslandTransform, mockAdRule } from "./lib/mockAdRule";
 import { NdjsonStreamFilter, errorMessage, type FilterError } from "./lib/ndjsonFilter";
 import { Probe } from "./lib/probe";
 import { MOCK_PROFILE, SITE_PROFILE, type FilterMode, type FilterModes, type SiteProfile } from "./lib/profiles";
-import { headerValue, isTextualContentType } from "./lib/record";
+import { hasNoBodyToTap, headerValue, isTextualContentType } from "./lib/record";
 import { Redactor } from "./lib/redact";
 
 interface CoreFilter {
@@ -273,6 +273,9 @@ export class Filters {
   /** Always returns {}: nothing is cancelled, redirected or rewritten. */
   private onHeaders(details: HeadersDetails, profile: SiteProfile): browser.webRequest.BlockingResponse {
     if (isOwnRequest(details) || !profile.isOwnHost(new URL(details.url).hostname)) return {};
+    // Redirects and empty responses are never tapped (a redirect keeps its requestId, and the
+    // final response is tapped on its own onHeadersReceived).
+    if (hasNoBodyToTap(details.statusCode)) return {};
     try {
       const contentType = headerValue(details.responseHeaders, "content-type");
       const body = bodyFor(details, profile, contentType);

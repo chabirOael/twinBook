@@ -146,7 +146,7 @@ describe("real-site profile is observe only (C17)", () => {
     const lines = bridge.lines();
     const text = JSON.stringify(lines);
     const bodies = bridge.bodies();
-    const body = dec.decode(bodies.get("bodies/r1.res")!);
+    const body = dec.decode(bodies.get([...bodies.keys()].find((k) => k.startsWith("bodies/r1-"))!)!);
     // C5: values gone from everything that left the extension, names and attributes kept.
     for (const secret of ["100012345678901", "12%3AsEcReTxS", "DaTrVaLuE123", "FrCookieValue77", "SbCookieValue88", TOKEN, LSD]) {
       expect(text.includes(secret), `lines contain ${secret}`).toBe(false);
@@ -190,7 +190,7 @@ describe("real-site profile is observe only (C17)", () => {
     expect((observe["probe"] as { candidateTotals: object }).candidateTotals).toEqual({ ad_id: 1, client_token: 1 });
     // Third-party script of a site page: metadata recorded, no body.
     expect(bridge.lines().some((l) => l["ev"] === "headers" && l["rid"] === "s1" && l["own"] === false)).toBe(true);
-    expect([...bridge.bodies().keys()]).toEqual(["bodies/x1.res"]);
+    expect([...bridge.bodies().keys()]).toEqual(["bodies/x1-1.res"]);
   });
 
   it("mock observe mode: the page gets the unfiltered input, the decisions are reported", async () => {

@@ -9,7 +9,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import org.mozilla.geckoview.AllowOrDeny
+import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoSession.NavigationDelegate.LoadRequest
+import org.mozilla.geckoview.GeckoSession.PermissionDelegate.ContentPermission
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 
@@ -32,12 +36,26 @@ data class PageState(
     val lastLoadSucceeded: Boolean? = null,
     val firstContentfulPaint: Boolean = false,
     val crashed: Boolean = false,
+    val canGoBack: Boolean = false,
+    val canGoForward: Boolean = false,
+    /** Loads ignored because their scheme is not allowed (custom schemes, intents). */
+    val blockedLoads: Int = 0,
+    /** Scheme of the last ignored load (never the URL). */
+    val lastBlockedScheme: String? = null,
+    /** Requests for a new window that were loaded in this session instead. */
+    val newWindowsInPlace: Int = 0,
+    /** Permission requests that were denied. */
+    val permissionsDenied: Int = 0,
 )
 
 /**
  * One browsing session (a tab) in the engine's runtime. All sessions share the runtime's cookie
  * jar and the twin-bridge extension. A session is headless until it is attached to a
  * GeckoView; headless sessions load pages and run scripts normally.
+ *
+ * Navigation safety, for every session: only the schemes in [ALLOWED_SCHEMES] load; anything
+ * else (custom schemes, `intent:`) is ignored and never leaves the app. A request to open a new
+ * window loads in this session. Every permission request is denied.
  */
 class EngineSession internal constructor(
     private val engine: Engine,
@@ -97,10 +115,98 @@ class EngineSession internal constructor(
                 pageFlow.value = pageFlow.value.copy(crashed = true, loading = false)
             }
         }
+        geckoSession.navigationDelegate = object : GeckoSession.NavigationDelegate {
+            override fun onLocationChange(session: GeckoSession, url: String?, perms: MutableList<ContentPermission>, hasUserGesture: Boolean) {
+                pageFlow.value = pageFlow.value.copy(url = url)
+            }
+
+            override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
+                pageFlow.value = pageFlow.value.copy(canGoBack = canGoBack)
+            }
+
+            override fun onCanGoForward(session: GeckoSession, canGoForward: Boolean) {
+                pageFlow.value = pageFlow.value.copy(canGoForward = canGoForward)
+            }
+
+            override fun onLoadRequest(session: GeckoSession, request: LoadRequest): GeckoResult<AllowOrDeny> {
+                if (!isAllowed(request.uri)) return GeckoResult.fromValue(AllowOrDeny.DENY)
+                if (request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_NEW) {
+                    openInPlace(request.uri)
+                    return GeckoResult.fromValue(AllowOrDeny.DENY)
+                }
+                return GeckoResult.fromValue(AllowOrDeny.ALLOW)
+            }
+
+            override fun onSubframeLoadRequest(session: GeckoSession, request: LoadRequest): GeckoResult<AllowOrDeny> =
+                GeckoResult.fromValue(if (isAllowed(request.uri)) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
+
+            override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
+                if (isAllowed(uri)) openInPlace(uri)
+                return null
+            }
+        }
+        geckoSession.permissionDelegate = object : GeckoSession.PermissionDelegate {
+            override fun onContentPermissionRequest(session: GeckoSession, perm: ContentPermission): GeckoResult<Int> {
+                denied("content permission ${perm.permission}")
+                return GeckoResult.fromValue(ContentPermission.VALUE_DENY)
+            }
+
+            override fun onAndroidPermissionsRequest(session: GeckoSession, permissions: Array<out String>?, callback: GeckoSession.PermissionDelegate.Callback) {
+                denied("android permissions ${permissions?.joinToString()}")
+                callback.reject()
+            }
+
+            override fun onMediaPermissionRequest(
+                session: GeckoSession,
+                uri: String,
+                video: Array<out GeckoSession.PermissionDelegate.MediaSource>?,
+                audio: Array<out GeckoSession.PermissionDelegate.MediaSource>?,
+                callback: GeckoSession.PermissionDelegate.MediaCallback,
+            ) {
+                denied("media")
+                callback.reject()
+            }
+        }
         geckoSession.open(engine.runtime)
         // A headless session has no view to mark it visible; keep it active so its page runs
         // at full speed (timers, network) instead of being throttled as a background tab.
         geckoSession.setActive(true)
+    }
+
+    /** Handles JavaScript dialogs and other prompts; null dismisses them. Main thread only. */
+    var promptDelegate: GeckoSession.PromptDelegate?
+        get() = geckoSession.promptDelegate
+        set(value) {
+            geckoSession.promptDelegate = value
+        }
+
+    private fun isAllowed(uri: String): Boolean {
+        val scheme = uri.substringBefore(':', "").lowercase()
+        if (scheme in ALLOWED_SCHEMES) return true
+        Log.i(Engine.TAG, "session $name: ignored a load with scheme '$scheme'")
+        pageFlow.value = pageFlow.value.copy(blockedLoads = pageFlow.value.blockedLoads + 1, lastBlockedScheme = scheme)
+        return false
+    }
+
+    private fun openInPlace(uri: String) {
+        pageFlow.value = pageFlow.value.copy(newWindowsInPlace = pageFlow.value.newWindowsInPlace + 1)
+        // Not from inside the delegate call that asked for the new window.
+        android.os.Handler(android.os.Looper.getMainLooper()).post { if (geckoSession.isOpen) geckoSession.loadUri(uri) }
+    }
+
+    private fun denied(what: String) {
+        Log.i(Engine.TAG, "session $name: denied $what")
+        pageFlow.value = pageFlow.value.copy(permissionsDenied = pageFlow.value.permissionsDenied + 1)
+    }
+
+    /** Main thread only. */
+    fun goBack() {
+        geckoSession.goBack()
+    }
+
+    /** Main thread only. */
+    fun reload() {
+        geckoSession.reload()
     }
 
     /** Shows this session in [view]. Main thread only. */
@@ -138,6 +244,11 @@ class EngineSession internal constructor(
 
     /** The user agent this session sends. */
     suspend fun userAgent(): String = withContext(Dispatchers.Main.immediate) { geckoSession.userAgent }.await().orEmpty()
+
+    companion object {
+        /** Schemes a session loads. Everything else is ignored. */
+        val ALLOWED_SCHEMES = setOf("http", "https", "about", "resource", "data", "blob")
+    }
 
     /** Main thread only. */
     fun close() {

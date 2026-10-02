@@ -29,6 +29,8 @@ import java.util.zip.GZIPOutputStream
  * - `GET /anchor`: static page with no scripts, the replay anchor
  * - `GET /blank.html`: empty same-origin page for iframes
  * - `POST /report?run=<id>`: the page posts its results here; see [awaitReport]
+ * - `POST /log?run=<id>&field=<f>`: pages log values here; see [logs]
+ * - capture pages (secrets, Bloks-shaped fetch, login form, navigation, bulk): see [CapturePages]
  */
 class MockServer : AutoCloseable {
     private val server = ServerSocket()
@@ -93,7 +95,13 @@ class MockServer : AutoCloseable {
                 val request = HttpIo.readRequest(input) ?: return
                 recorded += request
                 val out = ResponseWriter(BufferedOutputStream(s.getOutputStream(), 64 * 1024))
-                route(request, out)
+                try {
+                    route(request, out)
+                } finally {
+                    request.responseStatus = out.status
+                    request.responseLength = out.contentLength
+                    request.responseSha256 = out.contentSha256()
+                }
             } catch (_: IOException) {
                 // Peer went away; nothing to do.
             }
@@ -110,14 +118,27 @@ class MockServer : AutoCloseable {
             "/blank.html" -> out.sendText(200, HTML, MockPages.BLANK)
             "/session/set-cookies" -> setCookies(request, out)
             "/session/echo" -> out.sendText(200, JSON_TYPE, echo(request), listOf("Access-Control-Allow-Origin" to "*"))
+            "/log" -> {
+                val run = request.query["run"].orEmpty()
+                logs.computeIfAbsent(run) { CopyOnWriteArrayList() } += (request.query["field"].orEmpty() to request.body.toString(Charsets.UTF_8))
+                out.send(204, "text/plain", ByteArray(0))
+            }
             "/report" -> {
                 val run = request.query["run"].orEmpty()
                 reports.computeIfAbsent(run) { CompletableFuture() }.complete(request.body.toString(Charsets.UTF_8))
                 out.send(204, "text/plain", ByteArray(0))
             }
-            else -> out.sendText(404, "text/plain", "not found")
+            else -> if (!CapturePages.route(request, out)) out.sendText(404, "text/plain", "not found")
         }
     }
+
+    private val logs = ConcurrentHashMap<String, CopyOnWriteArrayList<Pair<String, String>>>()
+
+    /** What pages posted to `/log?run=<run>&field=<f>` (field to body), in arrival order. */
+    fun logs(run: String): List<Pair<String, String>> = logs[run]?.toList().orEmpty()
+
+    /** The last value logged for [field] in [run], if any. */
+    fun lastLog(run: String, field: String): String? = logs(run).lastOrNull { it.first == field }?.second
 
     private fun graphql(request: RecordedRequest, out: ResponseWriter) {
         val scenario = Scenarios.find(request.query["scenario"].orEmpty())
@@ -137,6 +158,7 @@ class MockServer : AutoCloseable {
         val sink = if (scenario.gzip) GZIPOutputStream(chunked, true) else chunked
         scenario.chunks().forEachIndexed { i, chunk ->
             if (i > 0 && scenario.delayMs > 0) Thread.sleep(scenario.delayMs)
+            out.noteContent(chunk)
             sink.write(chunk)
             sink.flush()
             trace.chunkSentAtMillis += System.currentTimeMillis()

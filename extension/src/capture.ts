@@ -54,6 +54,7 @@ interface Session {
   readonly pending: Set<Promise<void>>;
   readonly errorSamples: string[];
   stopping: boolean;
+  nextBody: number;
 }
 
 let current: Session | null = null;
@@ -119,7 +120,7 @@ export class OpenBody {
     const rec = this.recorder;
     const data = rec.data();
     const sha256 = await sha256Hex(data);
-    const file = bodyFileName(this.requestId);
+    const file = bodyFileName(this.requestId, this.session.nextBody++);
     const redacted = latin1ToBytes(this.session.redactor.text(bytesToLatin1(data)));
     for (let off = 0; off < redacted.length || off === 0; off += BODY_PIECE_BYTES) {
       const piece = redacted.subarray(off, off + BODY_PIECE_BYTES);
@@ -280,7 +281,7 @@ export function installCapture(bridge: BridgeClient, hooks: CaptureHooks): void 
         }
       },
     });
-    session = { id, profiles, startedAt: Date.now(), redactor, transport, counters, openBodies: new Set(), pending: new Set(), errorSamples: [], stopping: false };
+    session = { id, profiles, startedAt: Date.now(), redactor, transport, counters, openBodies: new Set(), pending: new Set(), errorSamples: [], stopping: false, nextBody: 1 };
     current = session;
     active = listeners();
     for (const l of active) l.add();
