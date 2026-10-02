@@ -34,12 +34,10 @@ You will not log in, you have no account, and you must not create one.
 
 ## 2. Starting state, verified by the planner on 2026-10-02
 
-- M1 is merged on GitHub: `origin/main` is at `cff2f42`. The local checkout is still
-  on branch `m1-engine-gate`, whose tree is identical to `origin/main`. Local `main`
-  is behind. `docs/PLAN.md` has staged planner changes and `docs/prompts/M2a.md` is
-  untracked. Both belong in your first commit.
+- M1 is merged. Local `main` equals `origin/main`. The plan update and this prompt are
+  already committed there, and the working tree is clean.
 - `tools/check.sh`, the 28 instrumented tests, `tools/persistence-test.sh` and
-  `tools/extension-update-test.sh` all pass on `origin/main`.
+  `tools/extension-update-test.sh` all pass on `main`.
 - `/dev/kvm` is accessible through a temporary permission change. If it is not when
   you start, do everything that needs no device, then report.
 - Memory is tight. Host peak in M1 was 10.2 GB of 11 GB with swap in use. Stop Gradle
@@ -63,13 +61,11 @@ machine. Treat these as leads to confirm, not as facts:
 
 ## 3. Rules
 
-- Preflight, exactly: `git fetch origin`, then
-  `git switch -c m2a-capture-tooling origin/main`. The staged plan change carries over
-  because the trees are identical. Your first commit contains exactly `docs/PLAN.md`
-  and `docs/prompts/M2a.md` as you found them, with the message
-  `docs: accept M1, add M2a prompt`. Do not touch local `main` or any other branch.
-  Never push, never merge.
-- Do not edit `docs/PLAN.md` or this prompt after that commit.
+- Preflight: run `git fetch origin` and confirm that `main` equals `origin/main` and
+  the working tree is clean, then `git switch -c m2a-capture-tooling main`. If either
+  is not true, stop and report. Do not commit on `main` or any other branch. Never
+  push, never merge.
+- Do not edit `docs/PLAN.md` or this prompt.
 - **Real-site traffic budget.** You may load the real site's logged-out pages from the
   app on the emulator, only to prove the wiring: at most 12 page loads in total across
   `m.facebook.com` and `www.facebook.com`. You must not submit any form, type into

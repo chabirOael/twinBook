@@ -105,8 +105,9 @@ docs/                         PLAN.md, SETUP.md, findings, prompts/M<N>.md, repo
 
 Standing rules for every build agent:
 
-- Create branch `m<N>-<slug>` from main. The first commit on it holds the planner's
-  uncommitted documents (plan update and the milestone prompt). Commit locally in small
+- Create branch `m<N>-<slug>` from main. The planner's documents (plan update and
+  milestone prompt) are committed on main and pushed before a milestone starts, so the
+  branch starts from a clean tree equal to `origin/main`. Commit locally in small
   commits. Never push, never merge, leave main untouched. After the planner accepts
   the report, the owner pushes the branch and merges it through a GitHub pull request.
 - Do not edit docs/PLAN.md. Propose changes in the report.
@@ -382,3 +383,5 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   moved from M2a to M2b so it is built against real shapes. Added the login-safe
   `daily` build after noticing that instrumented test runs uninstall the debug app,
   which would have destroyed the owner's login.
+- 2026-10-02: local main synced with GitHub at the owner's request. From now on the
+  planner's documents are committed on main and pushed before each milestone starts.
