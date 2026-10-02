@@ -79,7 +79,7 @@ export interface ScanRow {
 }
 
 /** Key names that look credential-like; listed with every opaque value, recurring or not. */
-export const SUSPICIOUS_NAME = /token|secret|auth|sess|key|sig|nonce|pass|cred|dtsg|lsd|csrf|xsrf|cookie|ticket|hash|uuid|device|machine|client_?id|cid$|^sid$/i;
+export const SUSPICIOUS_NAME = /token|secret|auth|sess|key|sig|nonce|pass|cred|dtsg|lsd|csrf|xsrf|cookie|ticket|hash|uuid|device|machine|client_?id|cid$|^sid$|crypt|cat$|cert|private|bearer/i;
 
 export function scanSession(dir: string): { rows: ScanRow[]; suspicious: ScanRow[]; records: number } {
   const s = loadSession(dir);
@@ -183,4 +183,41 @@ export function formatScan(dir: string, r: { rows: ScanRow[]; suspicious: ScanRo
   out.push(head);
   r.suspicious.forEach(line);
   return out.join("\n");
+}
+
+/** Parent keys that make every long string below them suspect. */
+export const CREDENTIAL_ANCESTOR = /token|secret|auth|crypt|nonce|pass(word)?$|^pass|cred|dtsg|lsd|csrf|xsrf|cookie|ticket|signature|private|bearer|_cat$|session_?key/i;
+/** Content tokens of the site's schema (pagination, rendering, tracking), reviewed in M2b: not credentials. */
+export const CONTENT_TOKEN_KEYS = /tracking|^(story_token|legacy_token|expansion_token|intent_token|page_token|mediaset_token|sectionToken|rawSectionToken|collectionToken|notif_filter_token|uri_token|reference_token|client_vpv_token|privacy_mutation_token|selected_filter_tokens|client_token)$|^comet_comment_author_name_and_badges_renderer$|^author$|^author_group_membership$|Cookie|Authenticity|Password|Credentials?Dialog|\.react$|^LSD|^InitialCookieConsent$|authorization_hub/;
+
+export interface AncestorRow {
+  ancestor: string;
+  key: string;
+  count: number;
+  lengths: number[];
+}
+
+/**
+ * Long unredacted strings (16+ characters, no spaces, not URLs, not placeholders) anywhere
+ * below a credential-like key, in every parsed response document of the session. Catches
+ * secrets whose own key is generic ("data", "encrypted") but whose parent names them.
+ */
+export function ancestorScan(dir: string, parse: (dir: string) => unknown[]): AncestorRow[] {
+  const rows = new Map<string, AncestorRow>();
+  const visit = (x: unknown, anc: string[]): void => {
+    if (Array.isArray(x)) for (const v of x) visit(v, anc);
+    else if (typeof x === "object" && x !== null) for (const [k, v] of Object.entries(x)) visit(v, [...anc, k]);
+    else if (typeof x === "string" && x.length >= MIN_LENGTH && !/\s/.test(x) && !x.startsWith("http") && !x.includes("!T:") && !/^!R\**!$/.test(x)) {
+      const flagged = anc.filter((a) => CREDENTIAL_ANCESTOR.test(a));
+      if (flagged.length === 0 || anc.some((a) => CONTENT_TOKEN_KEYS.test(a))) return;
+      const safe = (k: string): string => (/^[A-Za-z_$][A-Za-z0-9_$.]{0,79}$/.test(k) && !/\d{5,}/.test(k) ? k : "<key>");
+      const id = `${safe(flagged[flagged.length - 1]!)} > ${safe(anc[anc.length - 1] ?? "")}`;
+      const row = rows.get(id) ?? { ancestor: safe(flagged[flagged.length - 1]!), key: safe(anc[anc.length - 1] ?? ""), count: 0, lengths: [] };
+      row.count++;
+      if (!row.lengths.includes(x.length)) row.lengths.push(x.length);
+      rows.set(id, row);
+    }
+  };
+  for (const doc of parse(dir)) visit(doc, []);
+  return [...rows.values()].sort((a, b) => b.count - a.count);
 }

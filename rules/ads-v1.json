@@ -1,0 +1,76 @@
+{
+  "about": "Ad rules v1 for the site's home feed (www.facebook.com, Comet GraphQL), proposed in M2b from the owner's recordings of 2026-10-02 (docs/findings/payloads.md section 5). Evaluated by extension/src/lib/adRules.ts. A feed edge is removed only when signals of at least minFamilies different families match: signals of one family state the same fact, so one decoy field can never cause a removal. Field names on this site are obfuscated and may rotate (th_dat_spo stands for sponsored data, sposnsor_new_distac_action is misspelled at the source); every family therefore also has a test on a type name, which names the schema type rather than the field.",
+  "version": 1,
+  "minFamilies": 2,
+  "edgeArrays": [["data", "viewer", "news_feed", "edges"]],
+  "streamLabels": ["CometNewsFeed_viewerConnection$stream$CometNewsFeed_viewer_news_feed"],
+  "signals": [
+    {
+      "id": "sponsored-data",
+      "family": "sponsored-data",
+      "why": "The story's sponsored-data object (type SponsoredData, carries ad_id and client_token). Null on every organic story recorded.",
+      "any": [
+        { "path": ["node", "th_dat_spo"], "notNull": true, "type": "object" },
+        { "path": ["node", "sponsored_data"], "notNull": true, "type": "object" },
+        { "anywhereKey": "__typename", "equals": "SponsoredData" }
+      ]
+    },
+    {
+      "id": "edge-sponsor-action",
+      "family": "edge-placement",
+      "why": "Edge-level number set only on sponsored edges (null on every organic edge recorded). It sits outside the story node, written by the feed's ranking layer, not by the story.",
+      "any": [
+        { "path": ["sposnsor_new_distac_action"], "type": "number" },
+        { "path": ["sponsor_new_distac_action"], "type": "number" }
+      ]
+    },
+    {
+      "id": "sponsored-label-strategy",
+      "family": "sponsored-label",
+      "why": "The header's metadata renders the Sponsored label through this strategy; organic stories carry audience, timestamp or attribution strategies instead.",
+      "any": [
+        { "path": ["node", "comet_sections", "context_layout", "story", "comet_sections", "metadata", "*", "__typename"], "equals": "CometStorySponsoredLabelStrategy" },
+        { "anywhereKey": "__typename", "equals": "CometStorySponsoredLabelStrategy" },
+        { "anywhereKey": "__module_component_CometFeedStorySponsoredLabelStrategy_sponsoredLabel", "notNull": true }
+      ]
+    },
+    {
+      "id": "ad-attachment-style",
+      "family": "ad-attachment",
+      "why": "The attachment is rendered with the ad style (4 of 5 recorded ads; the fifth was a video ad with the normal video style).",
+      "any": [
+        { "path": ["node", "attachments", "*", "styles", "__typename"], "equals": "StoryAttachmentShareAdStyleRender" },
+        { "anywhereKey": "__typename", "equals": "StoryAttachmentShareAdStyleRender" }
+      ]
+    }
+  ],
+  "suggestionSignals": [
+    {
+      "id": "follow-button",
+      "family": "suggested",
+      "why": "A Follow button in the story title: the viewer does not follow the author, so the story was recommended.",
+      "any": [
+        { "anywhereKey": "__typename", "equals": "CometFeedStoryFollowButtonStrategy" },
+        { "anywhereKey": "__typename", "equals": "CometFeedStoryCollabFollowButtonStrategy" }
+      ]
+    },
+    {
+      "id": "recommendation-label",
+      "family": "suggested",
+      "why": "Header metadata strategy for a recommendation label.",
+      "any": [{ "anywhereKey": "__typename", "equals": "CometStoryRecommendationLabelStrategy" }]
+    },
+    {
+      "id": "preference-bumper",
+      "family": "suggested",
+      "why": "A persistent bumper that explains why the story is shown.",
+      "any": [{ "anywhereKey": "__typename", "equals": "IFRBroadTransientPreferenceSignalBumper" }]
+    },
+    {
+      "id": "showcase-unit",
+      "family": "suggested",
+      "why": "A showcase unit of short videos (Reels) instead of a story.",
+      "any": [{ "path": ["node", "__typename"], "equals": "ShowcaseFeedUnit" }]
+    }
+  ]
+}

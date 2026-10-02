@@ -1,6 +1,6 @@
 {
   "about": "Layer 1 redaction rules for twin-bridge captures (docs/CAPTURE.md section 5). Every entry has a 'why'. Values are replaced by a placeholder of the same length; names, keys and structure stay. Shape-only fields such as __rev, __req, __s, __hsi, __dyn, __csr, __user are deliberately absent. Key names match case-insensitively and exactly, so camel-case spellings need their own entry (csrftoken already covers csrfToken, sessionKey covers sessionkey).",
-  "version": 3,
+  "version": 5,
   "minTaintLength": 8,
   "taintStopList": [
     "true",
@@ -346,6 +346,30 @@
     {
       "name": "x-dgw-deviceid",
       "why": "Seen in the M2b scan: device identifier in the realtime gateway's WebSocket URL."
+    },
+    {
+      "name": "encrypted_serialized_cat",
+      "why": "Seen in M2b (desktop document, MessengerWebInitData.cryptoAuthToken): a serialized crypto auth token of about 2300 characters for the messaging client."
+    },
+    {
+      "name": "encrypted",
+      "why": "Seen in M2b (desktop document, MRequestConfig.ajaxResponseToken): encrypted half of a response-verification token whose other half is under 'secret'."
+    },
+    {
+      "name": "dtsgToken",
+      "why": "Top-level key of /ajax/ route responses; null in every M2b recording, but named for the fb_dtsg value when the server refreshes it."
+    },
+    {
+      "name": "dtsgAsyncGetToken",
+      "why": "Top-level key of /ajax/ route responses; null in every M2b recording, but named for the fb_dtsg_ag value when the server refreshes it."
+    },
+    {
+      "name": "cryptoAuthToken",
+      "why": "Messaging crypto auth token, if it is ever sent as a string."
+    },
+    {
+      "name": "data",
+      "why": "Seen in M2b: anonymous credentials issued to the messaging web worker (MessagingWebACSGraphQLServerProviderTokenIssuanceQuery, credentials[].evaluation/proof[].data, 144 characters). Only string values are replaced; GraphQL's data object is never a string, so response structure is unaffected. 37 string values under this key in the four logged-in recordings."
     }
   ]
 }

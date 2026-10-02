@@ -3,15 +3,36 @@
 //
 //   rescrub <session dir>... [--replace]   layer 1 + layer 2 again with the current rules
 //   scan <session dir>...                  keys whose values are long, opaque and recur
-import { formatScan, scanSession } from "./opaqueScan";
+//   findings <session dir>... [--rules f]  the numbers of docs/findings/payloads.md
+//   keypaths <key> <session dir>...        where a key occurs in the feed edges (exploration)
+import { join } from "node:path";
+import { findingsReport, keyPathsReport } from "./findings/report";
+import { ancestorScan, formatScan, scanSession } from "./opaqueScan";
+import { Session } from "./findings/session";
 import { rescrubSession } from "./rescrub";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flags = new Set(rest.filter((a) => a.startsWith("--")));
-const paths = rest.filter((a) => !a.startsWith("--"));
+const rulesAt = rest.indexOf("--rules");
+const rulesFile = rulesAt >= 0 ? rest[rulesAt + 1]! : join(process.env["TWINBOOK_ROOT"] ?? "..", "rules", "ads-v1.json");
+const paths = rest.filter((a, i) => !a.startsWith("--") && !(i > 0 && rest[i - 1] === "--rules"));
+
+/** Every parsed response document of a session: NDJSON and guarded bodies, document islands. */
+function allDocuments(dir: string): unknown[] {
+  const s = new Session(dir);
+  const docs: unknown[] = [];
+  for (const r of s.recs.values()) {
+    if (r.body === undefined) continue;
+    if (s.info(r)?.type === "main_frame") docs.push(...s.islands(r).map((x) => x.json));
+    else docs.push(...s.guarded(r).docs, ...s.ndjson(r).docs);
+  }
+  return docs;
+}
 
 function usage(): never {
-  process.stderr.write("usage: capture-tools rescrub <session dir>... [--replace]\n       capture-tools scan <session dir>...\n");
+  process.stderr.write(
+    "usage: capture-tools rescrub <session dir>... [--replace]\n       capture-tools scan <session dir>...\n       capture-tools findings <session dir>... [--rules <file>]\n       capture-tools keypaths <key> <session dir>...\n",
+  );
   process.exit(2);
 }
 
@@ -29,7 +50,22 @@ switch (cmd) {
   }
   case "scan": {
     if (paths.length === 0) usage();
-    for (const p of paths) process.stdout.write(formatScan(p, scanSession(p)) + "\n");
+    for (const p of paths) {
+      process.stdout.write(formatScan(p, scanSession(p)) + "\n");
+      const rows = ancestorScan(p, allDocuments);
+      process.stdout.write(`  long unredacted strings below credential-like keys (content tokens excluded): ${rows.length}\n`);
+      for (const r of rows) process.stdout.write(`  ${String(r.count).padStart(6)}  len ${r.lengths.sort((a, b) => a - b).join(",").padEnd(20)}  ${r.ancestor} > ${r.key}\n`);
+    }
+    break;
+  }
+  case "findings": {
+    if (paths.length === 0) usage();
+    process.stdout.write(findingsReport(paths, rulesFile) + "\n");
+    break;
+  }
+  case "keypaths": {
+    if (paths.length < 2) usage();
+    process.stdout.write(keyPathsReport(paths.slice(1), rulesFile, paths[0]!) + "\n");
     break;
   }
   default:
