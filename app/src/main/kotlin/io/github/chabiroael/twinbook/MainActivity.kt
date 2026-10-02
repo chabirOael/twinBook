@@ -9,10 +9,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val info = PlaceholderInfo.load(this)
+        val lab = EngineLab.get(this)
         setContent {
             TwinBookTheme {
-                PlaceholderScreen(info)
+                EngineLabScreen(lab)
             }
         }
     }
