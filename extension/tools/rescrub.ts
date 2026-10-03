@@ -4,6 +4,11 @@
 // scan). The original session is only read; the result is a new finalized session next to it,
 // `<id>-rescrub`, with a `rescrub` section in its session.json. Nothing unredacted is written:
 // the files are built in memory, scrubbed and verified first.
+//
+// A re-scrubbed copy can itself be re-scrubbed in place (`inPlace`, M3a), so rules added after
+// the originals were deleted still reach it: the new copy is written into a temporary
+// directory and swapped in (sessionIo.replaceFinalizedSession). Placeholders already in the
+// copy (`!R***!`, `!T:<label>!`) are left as they are.
 
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -11,7 +16,7 @@ import { bytesToLatin1, latin1ToBytes } from "../src/lib/bytes";
 import { pickDetails } from "../src/lib/record";
 import { Redactor, RULES, sanitizeLabel, type Header } from "../src/lib/redact";
 import { DEFAULT_TAINT_OPTIONS, TaintScrubber } from "../src/lib/taint";
-import { loadSession, parseLines, sha256, writeFinalizedSession, type SessionLine } from "./sessionIo";
+import { loadSession, parseLines, replaceFinalizedSession, sha256, writeFinalizedSession, type SessionLine } from "./sessionIo";
 
 export const RESCRUB_SUFFIX = "-rescrub";
 
@@ -55,13 +60,16 @@ export function redactLine(line: SessionLine, r: Redactor): string {
   return r.text(JSON.stringify(out));
 }
 
-export function rescrubSession(srcDir: string, options: { replace?: boolean } = {}): RescrubResult {
+export function rescrubSession(srcDir: string, options: { replace?: boolean; inPlace?: boolean } = {}): RescrubResult {
   const src = loadSession(srcDir);
   const id = basename(srcDir);
-  if (id.endsWith(RESCRUB_SUFFIX)) throw new Error(`${id} is already a re-scrubbed copy; re-scrub the original`);
-  const outId = `${id}${RESCRUB_SUFFIX}`;
-  const outDir = join(dirname(srcDir), outId);
-  if (existsSync(outDir)) {
+  const inPlace = options.inPlace === true;
+  if (inPlace && !id.endsWith(RESCRUB_SUFFIX)) throw new Error(`${id} is not a re-scrubbed copy; --in-place rewrites only -rescrub copies (originals are never changed)`);
+  if (!inPlace && id.endsWith(RESCRUB_SUFFIX)) throw new Error(`${id} is already a re-scrubbed copy; re-scrub the original, or pass --in-place to rewrite the copy`);
+  const outId = inPlace ? id : `${id}${RESCRUB_SUFFIX}`;
+  const outDir = inPlace ? srcDir : join(dirname(srcDir), outId);
+  const prior = (src.session["rescrub"] ?? {}) as { source?: string; passes?: number };
+  if (!inPlace && existsSync(outDir)) {
     const prior = JSON.parse(readFileSync(join(outDir, "session.json"), "utf8")) as { rescrub?: { source?: string } };
     if (options.replace !== true) throw new Error(`${outDir} exists; pass --replace to rebuild it`);
     if (prior.rescrub?.source !== id) throw new Error(`${outDir} is not a re-scrub of ${id}; not touching it`);
@@ -90,7 +98,9 @@ export function rescrubSession(srcDir: string, options: { replace?: boolean } = 
     ...src.session,
     id: outId,
     rescrub: {
-      source: id,
+      source: inPlace ? (prior.source ?? id) : id,
+      // Number of re-scrubs this copy has been through (in place counts too).
+      passes: inPlace ? (prior.passes ?? 1) + 1 : 1,
       sourceChecksums: sha256(readFileSync(join(srcDir, "checksums.sha256"))),
       rulesVersion: (RULES as unknown as { version?: number }).version ?? null,
       rulesSha256: sha256(JSON.stringify(RULES)),
@@ -112,7 +122,8 @@ export function rescrubSession(srcDir: string, options: { replace?: boolean } = 
   files.set("session.json", scrubber.scrub(utf8Latin1(JSON.stringify(session, null, 2) + "\n")).text);
   secrets.length = 0;
   r.secrets.clear();
-  writeFinalizedSession(outDir, files);
+  if (inPlace) replaceFinalizedSession(outDir, files);
+  else writeFinalizedSession(outDir, files);
   return {
     source: id,
     dir: outDir,

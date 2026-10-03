@@ -21,7 +21,9 @@ source tools/env.sh
 - About 6 GB free disk for the toolchain, network access to dl.google.com,
   services.gradle.org, github.com (JDK download), registry.npmjs.org, Maven Central, and
   maven.mozilla.org (GeckoView only; the repository is content-filtered to
-  `org.mozilla.geckoview`). The first build downloads the 242 MB GeckoView AAR.
+  `org.mozilla.geckoview`). The first build downloads the 242 MB GeckoView AAR, and the
+  4.65 MB uBlock Origin release from github.com (`:engine:fetchUblockOrigin`, checksum checked,
+  cached in `~/.cache/twinbook/downloads`; docs/SHELL.md section 4).
 
 ## 2. Install the toolchain (once)
 
@@ -64,10 +66,11 @@ Runs, failing on the first error:
    skipped otherwise), esbuild bundle into `extension/dist/`, and the lint policy
    (`node lint.mjs`): `web-ext lint` errors fail; warnings fail unless listed with a reason
    in `extension/lint-allowlist.json` (today only `geckoViewAddons`).
-2. `./gradlew check assembleDebug`: JVM tests in `:data`, `:mockserver` and `:capture` (store,
-   finalize pass, the same taint vectors as the extension), Android lint in all five modules,
-   and the debug APK (`app/build/outputs/apk/debug/app-debug.apk`,
-   about 198 MB because GeckoView's native libraries for x86_64 and arm64-v8a are inside).
+2. `./gradlew check assembleDebug`: JVM tests in `:data` (the web shell's link rules, the
+   viewer id), `:mockserver` and `:capture` (store, finalize pass, the same taint vectors as the
+   extension), Android lint in all five modules, and the debug APK
+   (`app/build/outputs/apk/debug/app-debug.apk`, about 210 MB because GeckoView's native
+   libraries for x86_64 and arm64-v8a and uBlock Origin are inside).
 
 Extra arguments go to Gradle, for example `tools/check.sh --rerun-tasks`.
 
@@ -111,12 +114,28 @@ annotation and are excluded from Gradle connected runs; only these scripts run t
 - Debug builds have the application ID `io.github.chabiroael.twinbook.debug`; main
   activity `io.github.chabiroael.twinbook.MainActivity`.
 
+### Web shell (M3a)
+
+```bash
+tools/mock-host.sh start|stop|status|log [port]   # the mock on the host (default 8723) + adb reverse
+tools/shell-persistence-test.sh [--no-reboot]     # S5: last page and history across process death and a reboot
+tools/measure-shell-startup.sh <mode> [runs] [restart-every]   # S8: cold starts, start-up modes
+tools/typing-diagnostic.sh burst <runs> | probe <via> <delayMs> <reps>   # S10: key events and the input method
+```
+
+The debug build opens the developer start screen ("Web shell (real site)" opens the shell on the
+real site). Device scripts open the shell on the host mock with launch options that only the
+debug build reads (docs/SHELL.md section 8). The mock on the host survives app kills and device
+restarts and logs every request to `build/mock-host/requests-<port>.log`. Debug builds also
+resolve `mock.twinbook.test` to the loopback interface (a Gecko preference file), for the
+element-hiding test.
+
 ### Build types: debug and daily
 
 | Build | Application ID | Used by |
 |---|---|---|
 | `debug` | `io.github.chabiroael.twinbook.debug` | every test and agent script (`connectedDebugAndroidTest` installs and uninstalls it) |
-| `daily` | `io.github.chabiroael.twinbook.daily` | the owner's logged-in session only; installed next to debug, label "twinBook daily" |
+| `daily` | `io.github.chabiroael.twinbook.daily` | the owner's logged-in session only; installed next to debug, label "twinBook daily". Since M3a it opens the web shell on the real site at once, so **no agent launches it** |
 
 `daily` is a debug build with its own ID suffix (debuggable, debug-signed, so `run-as` can read
 its captures). No test task targets it (`testBuildType = "debug"`), and the Gradle tasks
@@ -126,7 +145,7 @@ its captures). No test task targets it (`testBuildType = "debug"`), and the Grad
 
 ```bash
 tools/daily-install.sh [--no-build]     # build and install or update the daily app, data kept
-tools/daily-launch.sh                   # launch the daily app
+tools/daily-launch.sh                   # launch the daily app (owner only: it opens the real site with the owner's account)
 tools/capture-pull.sh [--debug] list    # sessions in the daily (or debug) app, finalized or not
 tools/capture-pull.sh [--debug] pull <id>   # copy a finalized session to captures/<id>, verify checksums
 tools/capture-pull.sh [--debug] pull-all
@@ -134,11 +153,12 @@ node tools/capture-summary.mjs [--short] captures/<id>   # hosts, types, leads, 
 tools/har-import.sh <file.har> [--id <id>] [--out <dir>] # HAR from desktop Firefox -> captures/<id>
 tools/app-instrument.sh <Class[#method]> [-e k v]        # one :app test via am instrument, debug app, data kept
 tools/capture-tools.sh rescrub captures/<id> [--replace]   # layer 1 + 2 again with the current rules -> captures/<id>-rescrub
+tools/capture-tools.sh rescrub captures/<id>-rescrub --in-place   # the same on a re-scrubbed copy, rewritten in place
 tools/capture-tools.sh scan captures/<id>-rescrub          # opaque-value and credential-key scan (names, lengths, counts)
 tools/capture-tools.sh findings captures/<id>-rescrub ...  # every number of docs/findings/payloads.md
 tools/capture-tools.sh fixtures captures/<id>-rescrub ...  # sanitized fixtures into fixtures/ (fixtures/README.md)
 tools/capture-kill-test.sh              # C7: a killed capture cannot be pulled and is deleted at start
-tools/daily-survival-test.sh            # C13: daily data survives tests, M1 scripts and an update
+tools/daily-survival-test.sh [--skip-connected]   # C13: daily data survives tests, M1 scripts and an update; never launches it
 ```
 
 `captures/` is git-ignored. The format is in docs/CAPTURE.md, the owner's steps in
@@ -170,11 +190,13 @@ sudo apt install libx11-6 libxcb1 libxext6 libxi6 libsm6 libice6 libxkbfile1 lib
 ## 5. Project layout
 
 ```
-app/        Android app (Compose, Material 3, single activity): start screen, engine lab,
-            capture browser. Build types debug and daily.
+app/        Android app (Compose, Material 3, single activity): web shell, settings, uBlock
+            Origin dashboard, developer start screen, engine lab, capture browser. Build types
+            debug and daily. See docs/SHELL.md.
 engine/     Android library: GeckoView runtime, sessions, bridge; packages the extension.
             Instrumented gate tests in engine/src/androidTest. See docs/ENGINE.md.
-data/       Pure Kotlin JVM library, future models/normalizer/classifier (placeholder)
+data/       Pure Kotlin JVM library: the web shell's link rules (from rules/links-v1.json); future
+            models/normalizer/classifier
 mockserver/ Pure Kotlin JVM library: loopback mock of the site's traffic, used by tests
 capture/    Pure Kotlin JVM library: capture store, layer 2 taint scrubber, finalize pass
 extension/  twin-bridge WebExtension: TypeScript, esbuild, Vitest, web-ext
@@ -255,6 +277,24 @@ Useful Gradle commands (after `source tools/env.sh`):
   simplifications.
 - **Configuration cache and build cache** are on. If a build behaves oddly after editing
   build logic, retry with `--no-configuration-cache` to rule it out.
+- **Emulator memory grows with every app start (M3a).** The qemu process starts at about 3 to
+  4 GB and grows by about 250 MB per cold start of the app (GeckoView's processes leave host-side
+  rendering memory behind in the emulator; a guest reboot does not give it back). At about 9 GB
+  the host's OOM killer ends the emulator, which is a power cut for the AVD. Twice in M3a.
+  Restart the emulator (`tools/emulator-stop.sh` then `tools/emulator-start.sh`) before long
+  device sessions and after about 20 cold starts, stop Gradle daemons when only the emulator is
+  needed, and watch `ps -o rss= -C qemu-system-x86_64`. `tools/emulator-start.sh` treats an
+  emulator listed as `offline` (one that is still going down) as not running. `TWINBOOK_EMULATOR_GPU=guest` was tried:
+  this system image falls back to host-side `lavapipe`, which grows the same way.
+- **`emu kill` loses unwritten data.** `tools/emulator-stop.sh` now runs `sync` in the guest
+  first. Before M3a, an update of the daily app installed two seconds before a stop was lost:
+  the package stayed registered with its data, but its APK directory was missing at the next
+  boot (`pkg=null`, `pm list packages` without it). An in-place `tools/daily-install.sh`
+  restored it with every data file unchanged (docs/reports/M3a.md). After any abrupt stop,
+  check `adb shell pm list packages io.github.chabiroael.twinbook.daily`.
+- **Asset directories starting with `_`** are dropped by AGP's default ignore pattern; both
+  `:app` and `:engine` set `androidResources.ignoreAssetsPattern` without `<dir>_*` because
+  uBlock Origin needs its `_locales/`.
 
 ## 7. Protecting the owner's session
 
@@ -281,7 +321,10 @@ actions destroy it, and **agents must never do any of them**:
   never passes one. Cold boots (`-no-snapshot`) keep the data.
 
 Safe: `tools/emulator-stop.sh`, `tools/emulator-start.sh [--window]`, `tools/connected-test.sh`,
-the M1 device scripts, `tools/app-instrument.sh`, `tools/engine-instrument.sh` (they touch only
-the debug app and the engine test app), `tools/daily-install.sh` (update in place) and
-`tools/capture-pull.sh` (reads only). `tools/daily-survival-test.sh` checks this (C13 in
-docs/reports/M2a.md).
+the M1 device scripts, the M3a shell scripts, `tools/app-instrument.sh`, `tools/engine-instrument.sh`
+(they touch only the debug app and the engine test app), `tools/daily-install.sh` (update in
+place) and `tools/capture-pull.sh` (reads only). `tools/daily-survival-test.sh` checks this
+without ever launching the daily app.
+
+Since M3a, launching the daily app loads the real site with the owner's account: agents never
+launch it (no `tools/daily-launch.sh`, no `am start`, no tap on its icon).

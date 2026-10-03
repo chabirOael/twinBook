@@ -1,15 +1,15 @@
 // Offline re-scrub and opaque-value scan (M2b 5.1) on a synthetic finalized session.
 
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bytesToLatin1 } from "../src/lib/bytes";
 import { l1Placeholder } from "../src/lib/redact";
 import { rescrubSession } from "../tools/rescrub";
 import { formatScan, isOpaque, scanSession } from "../tools/opaqueScan";
-import { writeFinalizedSession } from "../tools/sessionIo";
-import { Session } from "../tools/findings/session";
+import { isFinalized, loadSession, replaceFinalizedSession, writeFinalizedSession } from "../tools/sessionIo";
+import { isViewerId, Session } from "../tools/findings/session";
 import { TaintScrubber } from "../src/lib/taint";
 
 const enc = new TextEncoder();
@@ -73,6 +73,57 @@ describe("offline re-scrub", () => {
   });
 });
 
+describe("re-scrub of a re-scrubbed copy, in place (M3a)", () => {
+  const LATER = "TokenARuleFoundLater123456";
+
+  it("is refused for an original and needed for a copy", () => {
+    const dir = makeSession();
+    expect(() => rescrubSession(dir, { inPlace: true })).toThrow(/not a re-scrubbed copy/);
+    const copy = rescrubSession(dir).dir;
+    expect(() => rescrubSession(copy)).toThrow(/--in-place/);
+  });
+
+  it("with the same rules, changes nothing but the record of passes; placeholders stay as they are", () => {
+    const dir = makeSession();
+    const copy = rescrubSession(dir).dir;
+    const before = loadSession(copy);
+    const r = rescrubSession(copy, { inPlace: true });
+    expect(r.dir).toBe(copy);
+    expect(r.verifyHits).toBe(0);
+    expect(r.replacements).toEqual({});
+    const after = loadSession(copy);
+    expect(after.eventsText).toBe(before.eventsText);
+    expect([...after.bodies]).toEqual([...before.bodies]);
+    expect(after.bodies.get("bodies/1-1.res")).toContain('"copy":"!T:field:accessToken!"');
+    const rescrub = after.session["rescrub"] as { source: string; passes: number };
+    expect(rescrub).toMatchObject({ source: "20261002-000000-site", passes: 2 });
+    expect(isFinalized(copy)).toBe(true);
+    // Only the copy is left in the directory: no temporary or previous directory.
+    const root = join(copy, "..");
+    expect(readdirSync(root).sort()).toEqual(["20261002-000000-site", "20261002-000000-site-rescrub"]);
+  });
+
+  it("applies what the current rules find in a copy, after the original is gone", () => {
+    const dir = makeSession();
+    const copy = rescrubSession(dir).dir;
+    // A copy made with older rules: a value under a key the current rules know (fb_dtsg) was
+    // left in, keyed in a body and unkeyed elsewhere.
+    const old = loadSession(copy);
+    const files = new Map<string, string>([["events.ndjson", old.eventsText], ["session.json", JSON.stringify(old.session)], ...old.bodies]);
+    files.set("bodies/1-1.res", files.get("bodies/1-1.res")!.replace("}", `,"fb_dtsg":"${LATER}","echo":"${LATER}"}`));
+    replaceFinalizedSession(copy, files);
+    rmSync(dir, { recursive: true });
+    expect(existsSync(dir)).toBe(false);
+    const r = rescrubSession(copy, { inPlace: true });
+    expect(r.verifyHits).toBe(0);
+    const body = loadSession(copy).bodies.get("bodies/1-1.res")!;
+    expect(body.includes(LATER)).toBe(false);
+    expect(body).toContain(`"fb_dtsg":"${l1Placeholder(LATER.length)}"`);
+    expect(body).toContain('"echo":"!T:field:fb_dtsg!"');
+    expect(body).toContain('"copy":"!T:field:accessToken!"');
+  });
+});
+
 describe("opaque-value scan", () => {
   it("lists recurring opaque values by key with lengths and counts, never the value", () => {
     const dir = makeSession();
@@ -126,6 +177,8 @@ describe("tainted numbers: sessions before and after the quoted placeholder", ()
     const g = s.guarded(s.recs.get("2")!);
     expect([g.docs.length, g.failed]).toEqual([2, 0]);
     expect(s.repairedPlaceholders).toBe(3);
+    // Readers accept the repaired old form as the viewer's id.
+    expect(isViewerId((nd.docs[0] as { data: { viewer: { id: unknown } } }).data.viewer.id)).toBe(true);
   });
 
   it("a body scrubbed by the current layer 2 is valid JSON as recorded, and the label is kept", () => {
@@ -141,6 +194,9 @@ describe("tainted numbers: sessions before and after the quoted placeholder", ()
     expect(doc.data.viewer.ids).toEqual(["!T:cookie:c_user!", 2]);
     expect(JSON.parse(doc.data.viewer.s)).toEqual({ actor: "!T:cookie:c_user!" });
     expect(doc.data.viewer.name).toBe("!T:cookie:c_user!");
+    // ... and the new quoted form, as a scalar and inside an array.
+    expect([doc.data.viewer.id, doc.data.viewer.ids[0]].every(isViewerId)).toBe(true);
+    expect([1, "1", "!T:cookie:xs!", null].some(isViewerId)).toBe(false);
     expect(scrubbed.includes(USER)).toBe(false);
   });
 });

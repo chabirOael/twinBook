@@ -21,6 +21,11 @@ androidxTestRunner = "1.7.0"
 # x86_64 and arm64-v8a.
 geckoview = "157.0.20260924084938"
 coroutines = "1.11.0"
+# uBlock Origin, built-in content blocker (docs/SHELL.md). The signed Firefox release asset is
+# downloaded at build time by :engine:fetchUblockOrigin and checked against this SHA-256 (the
+# digest GitHub publishes for the asset). Not a Maven artifact; kept here so versions live in one file.
+ublockOrigin = "1.75.0"
+ublockOriginSha256 = "5b74415860456370644bd80f16125e865b0e6c356bb5dfcfb84069967eaa5287"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }

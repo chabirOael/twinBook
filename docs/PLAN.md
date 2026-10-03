@@ -1,6 +1,6 @@
 # twinBook master plan
 
-Status: M2b and its fix-up M2c accepted 2026-10-02. M3a prompt issued. Waiting for the owner's pull request.
+Status: M3a accepted 2026-10-03. Next: the owner's trial on the phone, then M3b.
 
 This file is the single source of truth for the project. The planner (Claude, in the
 planning conversation) owns it and updates it after every milestone report. Build
@@ -96,6 +96,20 @@ native-feeling UI.
   tokens, page fields, and probably module bitmaps that only the site's JavaScript
   computes. Document ids of follow-up queries are in the script bundles only. The
   anti-forgery token lives 24 hours and has a refresh endpoint.
+- Established by M3a (docs/reports/M3a.md): uBlock Origin 1.75.0 runs as a second
+  built-in extension in GeckoView, sees itself as a mobile environment, blocks the
+  Google advertising pixels the logged-out mobile page loads, and costs about 51 MiB.
+  Both extensions are ready about 5.3 s after process start on the emulator; the first
+  page shows at about 6.3 s. Installing the extensions on every start is slower, so
+  the M1 start-up contract stays. Key events typed within about 300 ms of a field
+  gaining focus can be lost by the on-screen keyboard's input restart; this is
+  Android's input pipeline, not GeckoView or this app, and does not affect typing on
+  the on-screen keyboard itself.
+- Emulator rules learned the hard way: the emulator process grows with every cold start
+  of the app and the host kills it near 9 GB, which is a power cut for the virtual
+  device. Stopping it with `adb emu kill` right after an install lost the installed
+  code once (data intact); the stop script now syncs the guest first. Restart the
+  emulator between long device runs.
 - Not yet verified: whether a replayed request is accepted; whether `/api/graphql/` responses and
   service-worker traffic pass through the stream filter when logged in; cross-site
   replay against the real site. The owner's capture and M2b close the first two, M5
@@ -446,6 +460,13 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   not regenerated for that.
 - The gating typing test types one key at a time. The burst variant is a diagnostic
   that reports without failing the suite.
+- Decisions after M3a: strict mode keeps the two web-lite beacons until the owner's
+  trial shows it breaks nothing; `fb.me`, `fb.com` and `fb.watch` become own hosts in
+  M3b, since they only redirect to the site; emulator restarts between long device
+  runs are the working rule, and long device work moves to the real phone from M3b on.
+- The typing test: the input-method half is the gate; from M3b on the key-event half
+  is a diagnostic that reports and never fails the suite. On the planner's busier
+  machine it failed about one run in four; its cause is outside this repository.
 - Known gap: the final revision of `tools/setup-toolchain.sh` has not been run against
   an empty home directory. Its JDK and command-line-tools steps were. Revisit in M12.
 
@@ -459,7 +480,8 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
 | Owner capture | first pass done 2026-10-02: sessions `20261002-172602-site` (mobile) and `20261002-172927-site` (desktop). Neither contains a page document. A short supplementary capture with a reload is requested. | none |
 | M2b | gate passed with reservations, accepted 2026-10-02. Branch `m2b-findings`, waiting for the owner's pull request. | docs/reports/M2b.md |
 | M2c | fix-up accepted 2026-10-02, same branch | docs/reports/M2b.md, last section |
-| M3a | prompt issued 2026-10-02, docs/prompts/M3a.md | pending |
+| M3a | accepted 2026-10-03. Branch `m3a-web-shell`, waiting for the owner's pull request. | docs/reports/M3a.md |
+| Owner trial | waiting for the owner, docs/SHELL-CHECKLIST.md | none |
 | M3b to M12 | not started | none |
 
 ## 10. Change log
@@ -540,3 +562,14 @@ Size is relative agent effort: S, M, L. A gate milestone can change the plan.
   `daily` build on the emulator with its data intact. Answers to the agent's questions
   recorded in section 8. M3 split into M3a (shell core and uBlock Origin), an owner
   trial, and M3b (uploads, downloads, permissions, video, polish). M3a prompt issued.
+- 2026-10-03: M3a report reviewed and accepted. Planner re-ran in a fresh clone:
+  `tools/check.sh` (208 extension tests, 36 JVM tests, uBlock Origin checksum
+  verified against GitHub's digest), the instrumented suite twice (the first run was
+  invalidated by an emulator "System UI isn't responding" dialog that blocked every
+  later test; the second run passed 45 of 46, the one failure being the key-event
+  typing test), the typing test alone (3 of 4), the shell persistence, interrupted
+  capture and daily survival scripts (pass), and an in-place update of the `daily`
+  build with its 2,806 data files intact. Screenshots inspected. The lost-code
+  incident on the emulator was traced to the planner's own M2c verification: an
+  in-place update followed two seconds later by `adb emu kill`; fixed by the agent
+  with a guest sync before the kill.

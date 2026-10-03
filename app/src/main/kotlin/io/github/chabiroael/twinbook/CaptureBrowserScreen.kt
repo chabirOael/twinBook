@@ -164,7 +164,7 @@ object CaptureText {
  * answered only by its own buttons.
  */
 @Composable
-private fun PromptPanel(p: PendingPrompt) {
+internal fun PromptPanel(p: PendingPrompt) {
     var text by remember(p) { mutableStateOf((p as? PendingPrompt.Text)?.default.orEmpty()) }
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).testTag("prompt")) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {

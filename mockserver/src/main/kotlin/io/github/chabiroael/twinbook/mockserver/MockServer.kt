@@ -31,6 +31,7 @@ import java.util.zip.GZIPOutputStream
  * - `POST /report?run=<id>`: the page posts its results here; see [awaitReport]
  * - `POST /log?run=<id>&field=<f>`: pages log values here; see [logs]
  * - capture pages (secrets, Bloks-shaped fetch, login form, navigation, bulk): see [CapturePages]
+ * - web shell pages (links, redirect page, ads, beacons, long page, form, dark scheme): see [ShellPages]
  */
 class MockServer : AutoCloseable {
     private val server = ServerSocket()
@@ -44,15 +45,20 @@ class MockServer : AutoCloseable {
     @Volatile
     private var running = false
 
+    /** Called for every request as it arrives (the host mode logs them). */
+    @Volatile
+    var onRequest: ((RecordedRequest) -> Unit)? = null
+
     /** Port the server listens on (loopback only). Valid after [start]. */
     val port: Int get() = server.localPort
 
     /** `http://127.0.0.1:<port>`: the "site origin" of every mock page. */
     val origin: String get() = "http://127.0.0.1:$port"
 
-    fun start(): MockServer {
+    /** Starts listening on loopback, on [port] (0: any free port). */
+    fun start(port: Int = 0): MockServer {
         server.reuseAddress = true
-        server.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
+        server.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), port))
         running = true
         pool.execute {
             while (running) {
@@ -94,6 +100,7 @@ class MockServer : AutoCloseable {
                 val input = BufferedInputStream(s.getInputStream())
                 val request = HttpIo.readRequest(input) ?: return
                 recorded += request
+                onRequest?.invoke(request)
                 val out = ResponseWriter(BufferedOutputStream(s.getOutputStream(), 64 * 1024))
                 try {
                     route(request, out)
@@ -128,7 +135,7 @@ class MockServer : AutoCloseable {
                 reports.computeIfAbsent(run) { CompletableFuture() }.complete(request.body.toString(Charsets.UTF_8))
                 out.send(204, "text/plain", ByteArray(0))
             }
-            else -> if (!CapturePages.route(request, out)) out.sendText(404, "text/plain", "not found")
+            else -> if (!CapturePages.route(request, out) && !ShellPages.route(request, out)) out.sendText(404, "text/plain", "not found")
         }
     }
 

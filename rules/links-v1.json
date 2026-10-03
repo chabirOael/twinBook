@@ -1,0 +1,42 @@
+{
+  "about": "Link rules of the web shell (docs/SHELL.md section 3), read by :data (LinkRules). ownHosts: top-level navigations to these hosts stay in the shell; any other http(s) host opens in the default browser. redirects: the site's outbound-link redirect page, unwrapped without being loaded. trackingParams: query parameters removed from every target that leaves the shell or comes out of a redirect. One reason per entry. Host evidence: request metadata of the owner's four recordings (docs/findings/payloads.md section 0), counted by host and type in docs/reports/M3a.md.",
+  "version": 1,
+  "startUrl": "https://m.facebook.com/",
+  "ownHosts": [
+    { "host": "facebook.com", "subdomains": true, "why": "The site itself. Every main_frame of the four recordings was on m.facebook.com or www.facebook.com; its sockets (kaios-d., gateway., web-chat-e*.) and beacons are on other subdomains." },
+    { "host": "fbcdn.net", "subdomains": true, "why": "The site's own CDN: every image, video, script, font and stylesheet of the recordings (static.xx., scontent.*, z-m-static.xx., external.*). A photo or video opened on its own stays in the app." },
+    { "host": "fbsbx.com", "subdomains": true, "why": "The site's own sandbox domain: www.fbsbx.com was a sub_frame of the desktop page in session 183314 (and of the logged-out mobile page in M2a). Attachments are served from it." }
+  ],
+  "redirects": [
+    { "hosts": ["l.facebook.com", "lm.facebook.com"], "path": "/l.php", "param": "u", "why": "The site's outbound link redirect (link shim): the target is the u parameter, h is a per-click hash. l. serves the desktop site, lm. the mobile site. Loading it would tell the site which link was clicked. Not in the recordings (no outbound link was opened); shape from the site's public behaviour." }
+  ],
+  "trackingParams": [
+    { "name": "fbclid", "why": "Facebook click identifier the site appends to outbound targets." },
+    { "prefix": "utm_", "why": "Campaign tags (utm_source, utm_medium, utm_campaign, utm_term, utm_content, utm_id) added by advertisers and by the site's own share links." },
+    { "name": "gclid", "why": "Google Ads click identifier." },
+    { "name": "gbraid", "why": "Google Ads click identifier (iOS app campaigns)." },
+    { "name": "wbraid", "why": "Google Ads click identifier (web to app)." },
+    { "name": "dclid", "why": "Google Display & Video click identifier." },
+    { "name": "msclkid", "why": "Microsoft Advertising click identifier." },
+    { "name": "igshid", "why": "Instagram share identifier, seen on links shared from Instagram into posts." },
+    { "name": "mc_cid", "why": "Mailchimp campaign identifier." },
+    { "name": "mc_eid", "why": "Mailchimp per-recipient identifier." },
+    { "name": "_hsenc", "why": "HubSpot per-recipient tracking token." },
+    { "name": "_hsmi", "why": "HubSpot message identifier." },
+    { "name": "mkt_tok", "why": "Marketo per-recipient tracking token." },
+    { "name": "yclid", "why": "Yandex click identifier." },
+    { "name": "ttclid", "why": "TikTok click identifier." },
+    { "name": "twclid", "why": "X (Twitter) click identifier." },
+    { "name": "li_fat_id", "why": "LinkedIn first-party ad tracking identifier." },
+    { "prefix": "__cft__", "why": "The site's click flow token (__cft__[0]=...), listed in docs/findings/payloads.md appendix as ad and click tracking." },
+    { "prefix": "__xts__", "why": "The site's cross-surface tracking state, attached next to __cft__ on its links." },
+    { "name": "__tn__", "why": "The site's tracking node path, attached to its links." },
+    { "name": "fb_ref", "why": "The site's referral tag on shared links." },
+    { "name": "fb_source", "why": "The site's source tag on shared links." },
+    { "name": "fb_action_ids", "why": "Open Graph action identifiers added to links the site shares." },
+    { "name": "fb_action_types", "why": "Open Graph action types added to links the site shares." },
+    { "name": "action_object_map", "why": "Open Graph tracking map added to links the site shares." },
+    { "name": "action_type_map", "why": "Open Graph tracking map added to links the site shares." },
+    { "name": "action_ref_map", "why": "Open Graph tracking map added to links the site shares." }
+  ]
+}

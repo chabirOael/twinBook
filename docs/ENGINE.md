@@ -68,8 +68,11 @@ extension/
   test/                Vitest tests (fakeBrowser.ts: a fake WebExtension API for wiring tests)
   lint.mjs, lint-allowlist.json   web-ext lint policy
 mockserver/            pure JVM module: the hermetic mock of the site's traffic shape
-app/                   start screen, engine lab (EngineLab*.kt, assets/lab/), capture browser
-                       (CaptureBrowser*.kt, Prompts.kt), TwinBookApp, AppEngine
+app/                   web shell (Shell*.kt, docs/SHELL.md), start screen, engine lab (EngineLab*.kt,
+                       assets/lab/), capture browser (CaptureBrowser*.kt, Prompts.kt), TwinBookApp,
+                       AppEngine
+extension/src/strict.ts, startupProbe.ts, netlog.ts   strict mode, the blocker's start-up probe,
+                       the diag request counter (M3a)
 ```
 
 ## 3. The `:engine` API
@@ -89,22 +92,30 @@ engine.setTrackingProtection(TrackingProtection.STRICT)                     // m
 
 | Member | What it does |
 |---|---|
-| `Engine.start(context, config)` | Creates the one `GeckoRuntime` of the process, installs twin-bridge, connects the bridge. Later calls return the same engine; the first config wins. |
+| `Engine.start(context, config)` | Creates the one `GeckoRuntime` of the process, installs twin-bridge (and the content blocker, if configured), connects the bridge. Later calls return the same engine; the first config wins. |
 | `Engine.getOrNull()` | The running engine, if any. |
 | `Engine.GECKOVIEW_VERSION` | e.g. `157.0 (20260924084938)`. |
 | `runtime` | The `GeckoRuntime`, for anything not wrapped. |
 | `bridge` | The [Bridge](#bridge). |
 | `extension: StateFlow<ExtensionState>` | `Installing`, `Installed(id, version, webExtension)` or `Failed(message)`. |
-| `awaitReady(timeoutMs)` | Suspends until installed and connected (hello received). Returns `ReadyInfo(extensionId, installedVersion, reportedVersion, marker)`. Throws on install failure or timeout. |
-| `newSession(profile, name)` | Opens an `EngineSession`. Headless until attached. |
+| `awaitReady(timeoutMs)` | Suspends until twin-bridge is installed and connected (hello received) and the content blocker, if configured and enabled, filters (it cancelled a probe request, docs/SHELL.md section 5). Returns `ReadyInfo(extensionId, installedVersion, reportedVersion, marker, blocker)`. Throws on install failure, a failed blocker, or timeout. |
+| `blocker: StateFlow<BlockerState>` | `Absent` (none configured), `Installing`, `Disabled`, `Starting`, `Ready(version, probes, passed)`, `Failed`. |
+| `setBlockerEnabled(enabled)` | Suspends. GeckoView `disable`/`enable` of the blocker (not a reinstall); on returns once it filters again. |
+| `blockerWebExtension` | The blocker's `WebExtension` (options page URL, base URL). |
+| `configurationChanged(config)` | Passes a configuration change (dark mode, orientation) to Gecko. |
+| `newSession(profile, name, extraSchemes)` | Opens an `EngineSession`. Headless until attached. `extraSchemes` (e.g. `moz-extension`) load besides the allowed schemes. |
 | `setTrackingProtection(level)` | `DEFAULT` restores GeckoView's defaults; `STRICT` sets ETP strict, anti-tracking STRICT, strict social tracking protection, cookie behaviour 5. New sessions get `useTrackingProtection = (level == STRICT)`. |
 | `describeContentBlocking()`, `describeDefaultContentBlocking()` | Current and initial settings as JSON. |
-| `timings: StateFlow<EngineTimings>` | `processStartElapsed`, `engineStartElapsed`, `extensionInstalledElapsed`, `bridgeConnectedElapsed`, `extensionReinstalled` (elapsedRealtime clock). |
+| `timings: StateFlow<EngineTimings>` | `processStartElapsed`, `engineStartElapsed`, `extensionInstalledElapsed`, `bridgeConnectedElapsed`, `extensionReinstalled`, `startupMode`, `blockerInstalledElapsed`, `blockerReadyElapsed`, `blockerProbes`, `blockerProbesPassed`, `blockerReinstalled` (elapsedRealtime clock). |
 | `scope` | Main-thread coroutine scope for engine work. |
 
 `EngineConfig(debug, extensionLocation, extensionId, nativeApp, backgroundStartTimeoutMs,
-configureRuntime)`: `debug = true` sends web console output to logcat (tag `GeckoConsole`) and
-enables remote debugging. `configureRuntime` can adjust the `GeckoRuntimeSettings.Builder`.
+blocker, startupMode, configureRuntime)`: `debug = true` sends web console output to logcat (tag
+`GeckoConsole`) and enables remote debugging. `blocker = BlockerConfig(...)` adds uBlock Origin
+(id, location, probe URL, enabled, failAfterMs); null (the default, used by the :engine tests)
+means none. `startupMode` is `ENSURE_BUILT_IN` (default) or `INSTALL_EVERY_START`. The runtime
+follows the system's colour scheme (`COLOR_SCHEME_SYSTEM`). `configureRuntime` can adjust the
+`GeckoRuntimeSettings.Builder`.
 
 ### EngineSession
 
@@ -118,8 +129,11 @@ enables remote debugging. `configureRuntime` can adjust the `GeckoRuntimeSetting
 | `attach(view)` / `detach()` | Show in / remove from a `GeckoView`. Detached sessions keep running. |
 | `isHeadless` | True when not attached. |
 | `userAgent()` | The UA string this session sends. |
-| `goBack()`, `reload()` | Main thread only. `page.canGoBack` / `canGoForward` follow GeckoView. |
+| `goBack()`, `reload()` | Main thread only. `page.canGoBack` / `canGoForward` follow GeckoView's history list (`HistoryDelegate`), which also covers a restored history. |
 | `promptDelegate` | JavaScript dialogs and other prompts (null dismisses them). |
+| `navigationPolicy` | Decides every top-level navigation and new-window request first: `Allow`, `Deny`, `LoadInstead(uri)`; gets `NavigationRequest(uri, triggerUri, newWindow, userGesture, isRedirect)`. Null keeps the default. Denials count in `page.policyDenied`. |
+| `sessionState`, `restoreState(json)`, `flushState()` | Gecko's session state as JSON (flushed after every finished load; otherwise Gecko reports it every 10 s), and restoring it. |
+| `recover(fallbackUrl)` | After a crash or kill: reopens the GeckoSession and restores the last state taken on a web page. `page.recoveries` counts. |
 | `close()` | Main thread only. |
 
 `page.url` comes from location changes only (Gecko reports a page start even for a load the
@@ -206,8 +220,12 @@ Ordering and queueing:
 | `diag.emit` | `name`, `count`, `data` | emits `count` events `name` with `data` + `seq` |
 | `diag.callApp` | `method`, `params` | `result` of the extension calling the app |
 | `diag.early` | | outcome of the `engine.info` request the extension sends at startup |
+| `strict.set` | `enabled` | `enabled`, `active` (false while a capture runs), `capturing`, `endpoints`, `cancelled`, `cancelledByPath` |
+| `strict.describe` | | the same |
+| `probe.result` | `id`, `waitMs` | how the start-up probe request `id` ended: `outcome` `blocked` (NS_ERROR_ABORT) \| `passed` \| `timeout`, `error`, `status` |
+| `diag.netlog.start`, `diag.netlog.stop` | | stop returns `hosts`: per host and request type, `seen`, `completed`, `errors` by Gecko error code. No URLs. |
 
-`diag.*` exist for the instrumented tests; they only echo and count.
+`diag.*` exist for the instrumented tests and measurements; they only echo and count.
 
 ### Requests the app answers
 
@@ -379,7 +397,9 @@ the bridge; `tools/extension-update-test.sh` uses it to build a changed extensio
 Packaging: `:engine:buildTwinBridge` runs `npm run build` in `extension/`;
 `:engine:twinBridgeAssets<Variant>` copies `dist/` into the module's generated assets under
 `extensions/twin-bridge/`. The app gets the files through the library merge, exactly once
-(checked with `unzip -l`).
+(checked with `unzip -l`). uBlock Origin is packaged the same way under `extensions/ublock0/`
+by `:engine:fetchUblockOrigin` and `ublockOriginAssets<Variant>` (docs/SHELL.md section 4). Its
+version is the release's and never changes between builds, so `ensureBuiltIn` installs it once.
 
 ## 8. Mock server and tests
 
@@ -502,3 +522,22 @@ records every bridge event from the first one.
     called twice; complete the `GeckoResult` exactly once.
 16. **Real site, logged out (M2a):** responses come over HTTP/3 with `zstd` encoding and reach
     the stream filter decoded. No custom-scheme navigation was attempted in the M2a loads.
+
+## 10. Quirks met in M3a
+
+1. **Session state on a timer.** `onSessionStateChange` arrives only every 10 s
+   (`browser.sessionstore.interval`) unless `GeckoSession.flushSessionState()` is called.
+2. **Back skips entries without a user gesture.** `goBack()` skips history entries that a page
+   added by script without user activation; with only such entries, it does nothing. A tap or a
+   keyboard activation counts as a gesture.
+3. **`onCanGoBack` after `restoreState`** may not be called again; `HistoryDelegate.onHistoryStateChange`
+   is, with the restored history.
+4. **A page loaded before its view has a size** lays out at width 0 (`innerWidth` 0) and gets a
+   resize later; the shell waits for its view's first layout before the first load.
+5. **Two extensions start together.** Both background scripts start on the same late-startup
+   event. uBlock Origin then holds tab requests until its lists are loaded, except on its first
+   install, when it lets them through while it compiles them.
+6. **Built-in extensions with `_locales/`** need AGP's asset ignore pattern changed (docs/SHELL.md
+   section 4); otherwise Gecko says "Extension is invalid".
+7. **Native manifests are not supported on Android**: uBlock Origin's read of managed storage logs
+   this error at every start; harmless (it then uses its defaults).

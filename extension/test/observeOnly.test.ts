@@ -86,7 +86,9 @@ describe("real-site profile is observe only (C17)", () => {
         expect(text.includes(api), `${f} uses ${api}`).toBe(false);
       }
       // A blocking response never cancels or redirects; only replay.ts rewrites request headers.
-      expect(/\bcancel\s*:/.test(text), `${f} cancels`).toBe(false);
+      // The one exception is strict mode (strict.ts, its own tests in strict.test.ts): off by
+      // default, never active during a capture, and limited to the listed logging endpoints.
+      if (!f.endsWith("strict.ts")) expect(/\bcancel\s*:/.test(text), `${f} cancels`).toBe(false);
       expect(/redirectUrl\s*:/.test(text), `${f} redirects`).toBe(false);
       expect(/return\s*\{\s*responseHeaders/.test(text), `${f} rewrites response headers`).toBe(false);
       if (!f.endsWith("replay.ts")) expect(/return\s*\{\s*requestHeaders/.test(text), `${f} rewrites request headers`).toBe(false);

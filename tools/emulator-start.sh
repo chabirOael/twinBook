@@ -7,6 +7,8 @@
 # emulation is far too slow and is never used.
 # Cold boots every time (no snapshots). Animations are switched off for UI tests.
 # Emulator output goes to build/emulator/emulator.log.
+# TWINBOOK_EMULATOR_GPU overrides the GPU mode (default swiftshader_indirect; see docs/SETUP.md
+# on host memory).
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
@@ -37,7 +39,9 @@ fi
 
 serial="${TWINBOOK_EMULATOR_SERIAL}"
 adb start-server > /dev/null
-if adb devices | grep -q "^${serial}[[:space:]]"; then
+# Only a device that answers counts: right after tools/emulator-stop.sh the old one can still be
+# listed for a moment as "offline".
+if adb devices | grep -q "^${serial}[[:space:]]*device$"; then
   echo "emulator ${serial} already running"
   exit 0
 fi
@@ -46,7 +50,7 @@ log_dir="${TWINBOOK_ROOT}/build/emulator"
 mkdir -p "${log_dir}"
 start=$(date +%s)
 nohup emulator -avd "${TWINBOOK_AVD}" -port "${TWINBOOK_EMULATOR_PORT}" "${WINDOW_ARGS[@]}" \
-  -no-snapshot -no-audio -no-boot-anim -accel on -gpu swiftshader_indirect \
+  -no-snapshot -no-audio -no-boot-anim -accel on -gpu "${TWINBOOK_EMULATOR_GPU:-swiftshader_indirect}" \
   > "${log_dir}/emulator.log" 2>&1 &
 pid=$!
 echo "${pid}" > "${log_dir}/emulator.pid"

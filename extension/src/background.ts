@@ -1,5 +1,6 @@
 // twin-bridge background script: bridge to the app, stream filters, capture recorder, M1
-// request reporter, replay executor. Nothing here touches a page's JavaScript realm.
+// request reporter, replay executor, strict mode, the content blocker's start-up probe.
+// Nothing here touches a page's JavaScript realm.
 
 import { installCapture } from "./capture";
 import { BUILD_MARKER, NATIVE_APP } from "./config";
@@ -7,7 +8,10 @@ import { Filters } from "./filters";
 import { BridgeClient, BridgeRequestError, type PortLike } from "./lib/bridge";
 import { FilterModes, ModeError, MOCK_PROFILE, PROFILES, profileByName, type FilterMode } from "./lib/profiles";
 import { installRecorder } from "./recorder";
+import { installNetlog } from "./netlog";
 import { installReplay } from "./replay";
+import { StartupProbe } from "./startupProbe";
+import { StrictMode } from "./strict";
 
 const startedAt = Date.now();
 const manifest = browser.runtime.getManifest();
@@ -33,7 +37,11 @@ bridge.request("engine.info").then(
 const modes = new FilterModes();
 const filters = new Filters(bridge, modes);
 filters.install();
-installCapture(bridge, { siteListening: (on) => filters.setSiteListening(on), extensionStartedAt: startedAt });
+const strict = new StrictMode(bridge);
+strict.install();
+installCapture(bridge, { siteListening: (on) => filters.setSiteListening(on), captureActive: (on) => strict.setCaptureActive(on), extensionStartedAt: startedAt });
+new StartupProbe(bridge).install();
+installNetlog(bridge);
 installRecorder(bridge);
 installReplay(bridge);
 

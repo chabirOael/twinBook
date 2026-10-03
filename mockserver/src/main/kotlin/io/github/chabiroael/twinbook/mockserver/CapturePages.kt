@@ -39,6 +39,8 @@ class MockSecrets(run: String) {
  * - `GET|POST /async/wbloks/fetch/`: a single JSON document behind `for (;;);`, served as
  *   `application/x-javascript`, like the mobile site's fetch endpoint.
  * - `GET /login.html`: a login-like form; every input event is logged to `/log`.
+ * - `GET /typing.html`: the same two fields for the typing diagnostic (M3a); focusing the first
+ *   one empties the password field, so every repetition starts from an empty field.
  * - `GET /nav.html`: custom-scheme and intent links, a target=_blank link, window.open,
  *   geolocation and notification permission requests, alert, confirm, prompt; results go to `/log`.
  * - `GET /bulk?i=<n>&size=<bytes>`: a deterministic JSON body of exactly `size` bytes.
@@ -70,6 +72,7 @@ object CapturePages {
             }
             "/async/wbloks/fetch/" -> out.sendText(200, JS_TYPE, bloksDocument(run))
             "/login.html" -> out.sendText(200, MockServer.HTML, LOGIN_PAGE)
+            "/typing.html" -> out.sendText(200, MockServer.HTML, TYPING_PAGE)
             "/login/submit" -> out.sendText(200, MockServer.HTML, MockPages.page("submitted", "<p id=\"msg\">submitted</p>"))
             "/nav.html" -> out.sendText(200, MockServer.HTML, NAV_PAGE)
             "/bulk" -> {
@@ -183,6 +186,20 @@ a.big { line-height: 64px; background: #eef; text-align: center; }
   document.getElementById(id).addEventListener("focus", function () { log("focus", id); });
 });
 window.addEventListener("load", function () { layout(["email", "pass", "go"]); });
+</script></body></html>"""
+
+    val TYPING_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>mock typing</title>$STYLE</head><body>
+<input id="email" name="email" type="text" autocomplete="off" placeholder="text">
+<input id="pass" name="pass" type="password" autocomplete="off" placeholder="password">
+<script>$LOG_SCRIPT
+document.getElementById("email").addEventListener("focus", function () { document.getElementById("pass").value = ""; log("focus", "email"); });
+document.getElementById("pass").addEventListener("focus", function () { log("focus", "pass"); });
+// Logs travel in parallel requests and can arrive out of order: each carries its sequence number.
+var seq = 0;
+["email", "pass"].forEach(function (id) {
+  document.getElementById(id).addEventListener("input", function (e) { seq++; log(id, seq + ":" + e.target.value); });
+});
+window.addEventListener("load", function () { layout(["email", "pass"]); });
 </script></body></html>"""
 
     val NAV_PAGE = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>mock nav</title>$STYLE</head><body>

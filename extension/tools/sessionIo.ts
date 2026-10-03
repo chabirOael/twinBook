@@ -66,6 +66,26 @@ export function parseLines(eventsText: string): SessionLine[] {
  */
 export function writeFinalizedSession(dir: string, files: Map<string, string>): void {
   if (existsSync(dir)) throw new Error(`${dir} exists`);
+  renameSync(writePartial(dir, files), dir);
+}
+
+/**
+ * Replaces the finalized session in `dir` with `files`: the new session is written completely
+ * into a temporary directory first, then the old one is moved aside, the new one moved into
+ * place, and the old one removed. At no time is there a half-written session under `dir`.
+ */
+export function replaceFinalizedSession(dir: string, files: Map<string, string>): void {
+  if (!isFinalized(dir)) throw new Error(`${dir} is not a finalized session`);
+  const tmp = writePartial(dir, files);
+  const previous = join(dirname(dir), `.previous-${dir.split("/").pop()!}`);
+  rmSync(previous, { recursive: true, force: true });
+  renameSync(dir, previous);
+  renameSync(tmp, dir);
+  rmSync(previous, { recursive: true });
+}
+
+/** Writes every file, checksums.sha256 and FINALIZED into `.partial-<id>` next to `dir`; returns its path. */
+function writePartial(dir: string, files: Map<string, string>): string {
   const tmp = join(dirname(dir), `.partial-${dir.split("/").pop()!}`);
   rmSync(tmp, { recursive: true, force: true });
   mkdirSync(join(tmp, "bodies"), { recursive: true });
@@ -79,7 +99,7 @@ export function writeFinalizedSession(dir: string, files: Map<string, string>): 
   const checksums = sums.sort().join("\n") + "\n";
   writeFileSync(join(tmp, "checksums.sha256"), checksums);
   writeFileSync(join(tmp, "FINALIZED"), `twinbook-capture ${FORMAT_VERSION}\nchecksums ${sha256(checksums)}\n`);
-  renameSync(tmp, dir);
+  return tmp;
 }
 
 /** Sessions in `root` whose id is at least `minId` (string order), finalized, not derived copies. */
