@@ -104,7 +104,9 @@ Not in the recordings and therefore not own hosts: `fb.me`, `fb.com`, `messenger
    the system.
 4. A target on an own host stays in the shell (a redirect target replaces the navigation:
    `LoadInstead`); any other http(s) URL opens in the default browser (`AndroidOpener`: an
-   ACTION_VIEW intent with the browser selector, so an app that claims the link is not chosen).
+   ACTION_VIEW intent sent to the package of the default browser, the app that opens a plain
+   `https:` link, so an app that claims this particular link does not take it; without a default
+   browser, Android asks).
 5. Tracking parameters (`trackingParams` in the rules file: `fbclid`, `utm_*`, `gclid`, the
    site's `__cft__*`, `__tn__`, `__xts__*` and others, one reason each) are removed from every
    target that leaves the shell or comes out of the redirect page. The rest of the URL is kept

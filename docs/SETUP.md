@@ -120,6 +120,7 @@ annotation and are excluded from Gradle connected runs; only these scripts run t
 tools/mock-host.sh start|stop|status|log [port]   # the mock on the host (default 8723) + adb reverse
 tools/shell-persistence-test.sh [--no-reboot]     # S5: last page and history across process death and a reboot
 tools/measure-shell-startup.sh <mode> [runs] [restart-every]   # S8: cold starts, start-up modes
+tools/typing-diagnostic.sh burst <runs> | probe <via> <delayMs> <reps>   # S10: key events and the input method
 ```
 
 The debug build opens the developer start screen ("Web shell (real site)" opens the shell on the

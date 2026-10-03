@@ -17,9 +17,9 @@ in-place update with its data intact (section 9).
 
 | ID | Check | Status | Evidence |
 |---|---|---|---|
-| S1 | `check.sh` from a clean clone, second run downloads nothing | pass | {{S1}} |
-| S2 | whole instrumented suite three times in a row | pass | {{S2}} |
-| S3 | device scripts | pass | {{S3}} |
+| S1 | `check.sh` from a clean clone, second run downloads nothing | pass | Fresh clone of `m3a-web-shell` (at `f09b92a`; the commits after it change documents only) in a scratch directory, the cached uBlock Origin release moved aside first. `env -i HOME=$HOME bash tools/check.sh`, run 1: exit 0 in 106 s; extension `Test Files 18 passed (18)`, **`Tests 208 passed \| 1 skipped (209)`** (the leak test, no raw sessions in a clone; 194 before M3a); `lint: errors 0, warnings 1 (allowed 1), notices 0`; `> Task :engine:fetchUblockOrigin` / `uBlock Origin: downloading https://github.com/gorhill/uBlock/releases/download/1.75.0/uBlock0_1.75.0.firefox.signed.xpi` / `uBlock Origin 1.75.0: 4650100 bytes, SHA-256 5b74415860456370644bd80f16125e865b0e6c356bb5dfcfb84069967eaa5287 verified, unpacked`; `BUILD SUCCESSFUL in 1m 36s`; JVM tests `:data` 7, `:mockserver` 22, `:capture` 7, 0 failed (36; 30 before); `== check.sh: all checks passed`. Run 2: exit 0 in 6 s, `> Task :engine:fetchUblockOrigin UP-TO-DATE`, no download line, `134 actionable tasks: 2 executed, 132 up-to-date`, `Tests 208 passed \| 1 skipped`. In the working tree, with the raw sessions present: `Tests 209 passed (209)`, the leak test included. |
+| S2 | whole instrumented suite three times in a row | pass | `tools/connected-test.sh` three times in a row (A, B, C), the emulator restarted before each (its memory, section 9). A: `BUILD SUCCESSFUL in 5m 15s`, exit 0 in 317 s; B: exit 0 in 292 s; C: exit 0 in 289 s. Each: **46 passed, 0 failed, 0 skipped**: `:app` CaptureBrowserScreenTest 5, EngineLabScreenTest 3, ShellScreenTest 7; `:engine` BridgeTest 7, CaptureRecorderTest 3, DocumentFilterTest 1, ObserveModeTest 3, ReplayProbeTest 1, SessionsTest 2, StreamFilterTest 14 (38 before M3a; new: the 7 shell tests and the burst diagnostic). Burst diagnostic in the suite runs: `result=ok` in A and C (B not extracted). Earlier full runs during development failed while the shell tests were being written (first-load width 0, back key timing, dashboard tab history, the 10 s session store timer); all are fixed in the code and the tests and described in section 4 and docs/SHELL.md. No failure was seen in the three final runs. |
+| S3 | device scripts | pass | `tools/capture-kill-test.sh`: `== capture-kill-test: PASS` (`deleted unfinalized capture sessions at start: [probe-open-1790986270409]`). Its first attempt, the first instrumentation right after an emulator boot, stopped after step 1 without printing why (the script keeps the probe's output in a variable and exits under `set -e`); the second attempt passed, and I did not repeat the failure. `tools/shell-persistence-test.sh`: `== shell-persistence-test: PASS`. `tools/daily-survival-test.sh --skip-connected` (the suite had just run three times): `== persistence-test: PASS`, `== extension-update-test: PASS`, `== daily-survival-test: PASS`. Last lines below the table. |
 | S4 | shell on the mock: splash, back, reload, home, menu, rotation, dark scheme | pass | `ShellScreenTest` (7 tests, in each suite run). Evidence lines of run A: `S4 splash shown first, then the start page http://127.0.0.1:38791/shell/home.html`; `S4 back: feed -> home in the page's history, app stays in front`; `S4 menu reload: home requested 2 -> 3 times`; `S4 menu home: back on http://127.0.0.1:38791/shell/home.html`; `S4 rotation to landscape: loadCount 3 unchanged, dark.html requested 1 time(s), activity not recreated`; `S4 dark scheme: page reported [light, dark, light] while the system went dark and back to light, without a reload (loadCount 3)`; `S4 back: feed -> home, then back with no history left the shell`; settings: `uBlock Origin 1.75.0 (packaged 1.75.0), Ready \| license GPL-3.0, source https://github.com/gorhill/uBlock (release 1.75.0) \| release asset SHA-256 5b74…5287`. Screenshots: `docs/reports/assets/M3a-shell-light.png` (mock start page, edge to edge, menu button), `docs/reports/assets/M3a-shell-dark.png` (dark-scheme page while the system is dark). |
 | S5 | process death and restart restore the last page and history; crash shows recovery and reloads | pass | `tools/shell-persistence-test.sh` (last lines under the table). `ShellScreenTest#crashedContentProcessShowsRecoveryAndReloads`: `S5 about:crashcontent: session crashed=true, recovery view shown`; `S5 recovery: session reopened and its last page reloaded (http://127.0.0.1:38033/shell/feed.html), feed requested 1 -> 2`. |
 | S6 | link rules: table-driven tests; on the mock an internal link stays, a wrapped outbound link is unwrapped, stripped, handed over, the redirect page never requested | pass | `LinkRulesTest`: 4 tests, 0 failed; the table holds 47 cases (own hosts, look-alike hosts, user info in the authority, outbound with tracking parameters, the redirect page on both hosts, encoded targets incl. UTF-8 and doubly encoded, nested redirects up to the limit and beyond, targets on own hosts, malformed and empty targets, `javascript:`, `intent:` and `fb:` targets, `tel:`, `mailto:`, `geo:`, other schemes). Device, `ShellScreenTest#linksStayLeaveUnwrappedOrGoToTheSystem`: `S6 outbound: browser got [https://example.com/article?id=7, https://example.org/direct?ref=mock, https://example.net/new-window?k=v]; system got [tel:+15550100, mailto:someone@example.com, geo:25.28,51.53]; /l.php requested 0 times`; the mock's request log for the whole test: `[GET /shell/home.html, POST /log?run=&field=layout, POST /log?run=&field=loaded]` (the redirect page link was `/l.php?u=https%3A%2F%2Fexample.com%2Farticle%3Fid%3D7%26fbclid%3DIwAR0mock%26utm_source%3Dfacebook%26utm_medium%3Dsocial&h=AT0mockHash`); `S6 internal link stayed in the shell: http://127.0.0.1:36291/shell/feed.html?run=`. The real opener on the emulator (dry run, section 6): `START u0 {act=android.intent.action.VIEW cat=[android.intent.category.BROWSABLE] dat=http://localhost:8723/... pkg=com.android.chrome}`. |
@@ -28,12 +28,43 @@ in-place update with its data intact (section 9).
 | S9 | strict mode cancels the listed endpoints, off by default, inactive during a capture; observe-only tests pass | pass | Vitest `strict.test.ts` 7 tests and `observeOnly.test.ts` 8 tests pass (the source check now allows `cancel` in `strict.ts` only). Device, `ShellScreenTest#strictMode…`: off by default (`strict.describe` → `enabled false`); `S9 strict off: {weblite_load_logging=2, weblite_resources_timing_logging=2, control_logging=2}; strict on: {…=0, …=0, control_logging=2} (fetch and sendBeacon each)`; `S9 during a capture strict mode is inactive (…"enabled":true,"capturing":true,"active":false…): {weblite_load_logging=2, …}`; active again after the capture. Capture tests (`CaptureRecorderTest`, `ObserveModeTest`, `CaptureBrowserScreenTest`) pass in all three suite runs. |
 | S10 | text input: root cause, gating test 20 of 20, burst rate over 20 runs | pass | Section 4. Gating test (`CaptureBrowserScreenTest#textInputFromInputMethodAndKeyEvents`, one key at a time, after the input method is on the field): **20 of 20** fresh-process runs, emulator restarted every 6 runs. Burst diagnostic: **19 ok, 1 swapped (`Hw-Pas1s`), 0 lost** in 20 fresh-process runs. Logcat excerpts in section 4. |
 | S11 | real site, logged out: login page with uBlock Origin; third-party trackers of M2a blocked | pass | Section 5; screenshot `docs/reports/assets/M3a-real-site-login.png`. Ad hiding on: 50 requests, 14 cancelled, **no request to any Google host**; ad hiding off: `ad.doubleclick.net` 1, `googleads.g.doubleclick.net` 2, `www.google.com` 6, `www.googletagmanager.com` 1 (10 tracker requests), plus the `www.fbsbx.com` frame they come from. Traffic log: 3 loads used of 12, listed below the table. |
-| S12 | `daily` opens the shell, developer screens behind the menu, by inspection only; updated in place, data kept, never launched | pass | {{S12}} |
+| S12 | `daily` opens the shell, developer screens behind the menu, by inspection only; updated in place, data kept, never launched | pass | Code and manifest only, never launched. Generated `BuildConfig` of the daily variant: `APPLICATION_ID = "io.github.chabiroael.twinbook.daily"`, `OPEN_SHELL_AT_START = true`, `DEV_OVERRIDES = false` (it ignores the scripts' launch options), `DEBUG = true` (so the menu shows "Developer screens"). `MainActivity`: the root screen is `SHELL` when `OPEN_SHELL_AT_START`, and the shell's menu entry "Developer screens" pushes the start screen (capture browser, engine lab), whose first button returns to the shell. Merged manifest (`processDailyManifest`): `package="io.github.chabiroael.twinbook.daily"`, launcher activity `io.github.chabiroael.twinbook.MainActivity` with the `configChanges` list, `enableOnBackInvokedCallback="true"`; the daily APK contains `assets/extensions/ublock0/` (661 files). On the emulator: updated in place twice: at 23:33:49 (the recovery in section 9) and at 03:15:38 with the final code by `tools/daily-survival-test.sh`; `firstInstallTime=2026-10-02 10:43:38` throughout; a listing of all 2,806 files of its storage (name, size, modification time) identical before and after each update; `pidof` empty at every step; `pm list packages` lists it. Statement: the `daily` app was never launched in this milestone, by no script, test or command. |
 | S13 | re-scrub in place on a copy; nothing deleted | pass | `cp -a captures/20261002-181317-site-rescrub <tmp>/`; `tools/capture-tools.sh rescrub <tmp>/20261002-181317-site-rescrub --in-place` → `rescrub 20261002-181317-site-rescrub -> <tmp>/20261002-181317-site-rescrub: 1438 lines, 1 bodies, layer 1 {"cookies":280,"setCookies":1,"headers":0,"fields":0,"urlParams":110,"textValues":0}, layer 2 0/0 values eligible, replacements {}, verification hits 0` (the layer 1 counts are placeholders recognised again; nothing new was found because the rules have not changed). Afterwards the temporary directory holds only the copy (no `.partial-`, no `.previous-`), `sha256sum -c checksums.sha256` passes, `events.ndjson` is byte-identical to the copy in `captures/`, the file lists are identical, `session.json` says `{'source': '20261002-181317-site', 'passes': 2, 'rulesVersion': 5}`. `captures/` held 15 entries before and after. Vitest `rescrub.test.ts` adds 3 tests: refused for an original, idempotent with the same rules, and a value a later rule covers is removed from a copy whose original was deleted. |
 | S14 | documents | pass | New: `docs/SHELL.md`, `docs/SHELL-CHECKLIST.md`, `THIRD-PARTY.md`. Updated: `docs/SETUP.md` (web shell scripts, daily build behaviour, the uBlock Origin download, emulator memory, `emu kill` and the daily app, AGP asset pattern), `docs/ENGINE.md` (API, bridge methods, packaging, section 10 quirks). Dry-run notes in section 6. |
-| S15 | branch clean, nothing pushed, `main` untouched, no uBlock Origin files, recordings or secrets in git | pass | {{S15}} |
+| S15 | branch clean, nothing pushed, `main` untouched, no uBlock Origin files, recordings or secrets in git | pass | `git status` clean after the report commit (shown in the final message). `main` = `origin/main` = `d0115269b9eb0c5c6129924f36caaf4eb9215920` after `git fetch`; `git branch -r --contains m3a-web-shell` lists nothing; nothing was pushed. `git ls-files` (309 files): 0 matching `ublock0`, `*.xpi`, `captures/`, `*.har`. Scan of every line the branch adds outside `fixtures/` for 15-digit ids, cookie values (`c_user=`, `xs=`, `datr=`), `fb_dtsg=` values, webmail addresses and `AVq…` tokens: one match, `74415860456370644` inside uBlock Origin's SHA-256. The four screenshots show the mock, uBlock Origin's support page and the logged-out login page; no personal data. `git log --oneline --decorate -15` in the final message. |
 
-{{S3DETAIL}}
+Device script output:
+
+```
+$ tools/shell-persistence-test.sh
+== 1. fresh state, build a history
+history built; saved index 2 ['home.html', 'feed.html?run=']
+== 2. process death
+no process of io.github.chabiroael.twinbook.debug
+after process death: feed.html requested 1 time(s), home.html 0: last page restored; saved index 2 ['home.html', 'feed.html?run=']
+== 3. device restart
+device restarted
+after device restart: feed.html requested 1 time(s), home.html 0: last page restored; saved index 2 ['home.html', 'feed.html?run=']
+== 4. back goes to the previous page of the restored history
+back: home.html requested, app still in front; saved index 1 ['home.html', 'feed.html?run=']
+== shell-persistence-test: PASS
+
+$ tools/daily-survival-test.sh --skip-connected
+  no process of io.github.chabiroael.twinbook.daily (start)
+== before
+firstInstallTime=2026-10-02 10:43:38
+lastUpdateTime=2026-10-02 23:33:49
+  storage: 2806 files, 360106575 bytes
+== persistence-test: PASS
+== extension-update-test: PASS
+  no process of io.github.chabiroael.twinbook.daily (after the M1 device scripts)
+  install times and storage listing unchanged
+== tools/daily-install.sh (update in place, not launched)
+Success
+  no process of io.github.chabiroael.twinbook.daily (after the update)
+  marker survives-1790986388 intact; firstInstallTime=2026-10-02 10:43:38; lastUpdateTime=2026-10-02 23:33:49 -> lastUpdateTime=2026-10-03 03:15:38; storage listing identical (2806 files)
+== daily-survival-test: PASS
+```
 
 S11 traffic log (every load of the real site from this milestone, debug build, emulator, logged
 out, nothing typed or tapped on the page):
@@ -248,7 +279,22 @@ Chrome's own first-run screen was not accepted (it would contact Google).
 Commits on the branch (oldest last):
 
 ```
-{{COMMITS}}
+(this commit) docs: M3a report
+f09b92a docs: M3a report draft and screenshots
+1a6b331 shell: outbound links go to the default browser's package (the browser selector offered non-browsers); mock link to localhost for manual checks
+f0721a0 real-site probe waits for the shell screen; logged-out login page screenshot
+49e472a typing test: wait until the input method is on the password field; burst diagnostic judged from the set of values
+13719f6 engine: no blocker reinstall during its first install; typing diagnostic, per-key gating test, burst diagnostic; real-site probe; emulator-start ignores an offline emulator; start-up numbers
+de59a19 docs: SHELL.md, SHELL-CHECKLIST.md, THIRD-PARTY.md, SETUP and ENGINE for M3a; daily survival test never launches the daily app; start-up measurement script
+42c1d49 shell tests: dashboard closes with its own button, support page through the visible dashboard
+26dd56c capture tools: re-scrub a re-scrubbed copy in place; layer 1 keeps layer 2 placeholders; readers accept the viewer id quoted or as 0
+bdb1391 shell: state saved after start only and flushed after every load, history from Gecko's history list, mock host name for cosmetic tests, persistence script
+fd3b94d emulator-stop: sync the guest before emu kill, so a fresh install is not lost
+b41dc30 app: web shell with splash, back, menu, settings, uBlock Origin dashboard, link rules, saved state; mock shell pages and host mode
+938c85c data: link rules of the web shell with a table of unit tests
+f826830 engine: content blocker with a start-up probe, two start-up modes, navigation policy, session state, crash recovery
+fe46ffa twin-bridge: strict mode for the mobile site's logging beacons, start-up probe watcher, request counter
+94e6322 build: fetch uBlock Origin 1.75.0 at build time, checksum verified, into the engine's assets
 ```
 
 ## 7. Measurements
